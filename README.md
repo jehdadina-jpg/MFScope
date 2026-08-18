@@ -1,7 +1,5 @@
 # MFScope — India Mutual Fund Intelligence Engine
 
-> Scrape · Score · Visualise — a full-stack research tool for Indian mutual funds.
-
 ---
 
 ## What it does
@@ -25,81 +23,6 @@
 | Frontend | React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui |
 | Charts | Recharts |
 | Deployment | Backend → Railway/Render · Frontend → Vercel · DB → Supabase/Neon |
-
----
-
-## Quick Start
-
-### Backend
-
-```bash
-# 1. Create a virtual environment
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# 2. Install dependencies
-pip install -e ".[dev]"
-
-# 3. Install Playwright browsers (only needed if using JS scraping)
-playwright install chromium
-
-# 4. Configure environment
-cp .env.example .env
-# edit .env with your DATABASE_URL etc.
-
-# 5. Run DB migrations
-alembic upgrade head
-
-# 6. Start the API server
-uvicorn backend.api.main:app --reload --port 8000
-
-# 7. (Optional) Run the scheduler as a standalone process
-python -m backend.ingestion.scheduler
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev          # starts Vite dev server at http://localhost:5173
-```
-
----
-
-## Project Structure
-
-```
-mfscope/
-├── backend/
-│   ├── ingestion/
-│   │   ├── amfi_client.py       # AMFI NAV + scheme master
-│   │   ├── news_scraper.py      # RSS news ingestion
-│   │   └── scheduler.py        # APScheduler jobs
-│   ├── nlp/
-│   │   └── sentiment.py        # FinBERT / VADER sentiment
-│   ├── features/
-│   │   └── feature_builder.py  # 30+ engineered features
-│   ├── scoring/
-│   │   ├── rule_based.py       # Weighted composite scorer (v1)
-│   │   └── ml_model.py         # XGBoost learned model (v2)
-│   ├── api/
-│   │   └── main.py             # FastAPI routes
-│   └── db/
-│       └── models.py           # SQLAlchemy ORM models
-├── frontend/
-│   └── src/
-│       ├── components/         # ScoreBadge, FundCard, SparkLine, CategoryFilter
-│       ├── pages/              # Home, FundDetail
-│       └── lib/                # API client, hooks
-├── notebooks/
-│   └── model_exploration.ipynb
-├── tests/
-├── alembic/
-├── models/                     # Saved ML model artifacts (.gitkeep)
-├── pyproject.toml
-└── .env.example
-```
 
 ---
 
