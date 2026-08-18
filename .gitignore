@@ -1,0 +1,64 @@
+# ── Python ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Environment ───────────────────────────────
+.env
+*.env
+secrets.json
+
+# ── Database ──────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── ML artifacts ──────────────────────────────
+models/*.pkl
+models/*.joblib
+models/*.json
+models/*.ubj
+!models/.gitkeep
+
+# ── Jupyter ───────────────────────────────────
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# ── Node / Frontend ───────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+.npm
+
+# ── OS ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────
+*.log
+logs/
