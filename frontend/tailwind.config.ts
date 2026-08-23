@@ -6,153 +6,111 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // ── Modern dark surfaces with depth ───────────────────────────────
-        background: {
-          DEFAULT: "#0B0E14",   // rich dark blue-black
-          subtle:  "#131720",   // cards with slight elevation
-          muted:   "#1A1F2E",   // hover states
-          elevated: "#1F2637",  // elevated cards
+        // ── Surfaces — a quiet, cool near-black, not pure black ──────────────
+        canvas: "#0a0b0d",
+        surface: {
+          DEFAULT: "#111318",
+          raised: "#161920",
+          overlay: "#1c1f28",
+          hover: "#20242e",
         },
-        border: {
-          DEFAULT: "#1F2533",   // subtle border
-          strong:  "#2D3548",   // dividers
-          accent:  "#3D4A6B",   // highlighted borders
+        stroke: {
+          DEFAULT: "rgba(255,255,255,0.07)",
+          strong: "rgba(255,255,255,0.13)",
+          accent: "rgba(124,138,255,0.35)",
         },
-        // ── Text with better contrast ─────────────────────────────────────
-        text: {
-          primary:  "#F1F5F9",  // crisp white
-          secondary:"#94A3B8",  // soft gray
-          muted:    "#64748B",  // muted
-          accent:   "#38BDF8",  // accent text
+        ink: {
+          DEFAULT: "#eef0f4",
+          dim: "#a3a8b5",
+          faint: "#686e7d",
         },
-        // ── Premium gradient colors ───────────────────────────────────────
-        gradient: {
-          from: "#6366F1",      // indigo
-          via:  "#8B5CF6",      // purple
-          to:   "#EC4899",      // pink
-          gold: {
-            from: "#F59E0B",    // amber
-            to:   "#EF4444",    // red-orange
-          },
-          blue: {
-            from: "#3B82F6",    // blue
-            to:   "#8B5CF6",    // purple
-          },
-          green: {
-            from: "#10B981",    // green
-            to:   "#06B6D4",    // cyan
-          },
+        // ── One accent, used with intent ─────────────────────────────────────
+        brand: {
+          DEFAULT: "#6d7bff",
+          bright: "#8b96ff",
+          dim: "#2b2f57",
+          soft: "rgba(109,123,255,0.12)",
         },
-        // ── Conviction with more vibrant colors ────────────────────────────
+        // ── Semantic — desaturated enough to sit next to data all day ────────
+        up: { DEFAULT: "#3dd68c", soft: "rgba(61,214,140,0.12)" },
+        down: { DEFAULT: "#f2637a", soft: "rgba(242,99,122,0.12)" },
+        warn: { DEFAULT: "#e8a23d", soft: "rgba(232,162,61,0.12)" },
+        // ── Conviction scale — one hue family, ramped by strength ────────────
+        // Explicit "-soft" tokens rather than a bg-color/12 opacity modifier:
+        // Tailwind's alpha-modifier resolution is unreliable for colors nested
+        // two levels deep with multi-word keys, so the wash tone is its own
+        // literal rgba() entry instead of relying on that syntax at render time.
         conviction: {
-          "strong-buy": "#22C55E",  // vibrant green
-          "buy":        "#84CC16",  // lime green
-          "hold":       "#94A3B8",  // neutral gray
-          "sell":       "#F97316",  // orange
-          "strong-sell":"#EF4444",  // red
+          "strong-buy": "#2fbf82",
+          "strong-buy-soft": "rgba(47,191,130,0.12)",
+          buy: "#7cc98f",
+          "buy-soft": "rgba(124,201,143,0.12)",
+          hold: "#8b90a0",
+          "hold-soft": "rgba(139,144,160,0.12)",
+          sell: "#e08a5c",
+          "sell-soft": "rgba(224,138,92,0.12)",
+          "strong-sell": "#e2596e",
+          "strong-sell-soft": "rgba(226,89,110,0.12)",
         },
-        // ── Semantic colors (more saturated) ──────────────────────────────
-        positive: "#22C55E",   // vibrant green
-        negative: "#EF4444",   // vibrant red
-        neutral:  "#94A3B8",   // gray
-        success:  "#10B981",   // green
-        warning:  "#F59E0B",   // amber
-        danger:   "#EF4444",   // red
-        // ── Accent colors for CTAs ────────────────────────────────────────
-        accent: {
-          DEFAULT: "#6366F1",   // indigo — primary
-          hover:   "#818CF8",   // lighter indigo
-          dim:     "#312E81",   // dark indigo
-          bright:  "#A78BFA",   // bright purple
-        },
-        // ── Special effects ───────────────────────────────────────────────
-        glow: {
-          blue:   "rgba(99, 102, 241, 0.4)",
-          purple: "rgba(139, 92, 246, 0.4)",
-          green:  "rgba(34, 197, 94, 0.4)",
-          gold:   "rgba(245, 158, 11, 0.4)",
+        // ── Riskometer — cool (safe) to hot (risky), six clean steps ─────────
+        risk: {
+          low: "#3dd68c",
+          "low-soft": "rgba(61,214,140,0.12)",
+          "low-moderate": "#8fd35f",
+          "low-moderate-soft": "rgba(143,211,95,0.12)",
+          moderate: "#e8c33d",
+          "moderate-soft": "rgba(232,195,61,0.12)",
+          "moderately-high": "#e8a23d",
+          "moderately-high-soft": "rgba(232,162,61,0.12)",
+          high: "#e8703d",
+          "high-soft": "rgba(232,112,61,0.12)",
+          "very-high": "#e2596e",
+          "very-high-soft": "rgba(226,89,110,0.12)",
         },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
-        display: ["Inter", "system-ui", "sans-serif"],
+        sans: ["Inter", "-apple-system", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       fontSize: {
-        "2xs": ["0.65rem", { lineHeight: "1rem" }],
+        "2xs": ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.01em" }],
       },
       borderRadius: {
-        card: "1rem",
-        badge: "9999px",
-        xl: "1.25rem",
-        "2xl": "1.5rem",
+        card: "0.875rem",
+        pill: "9999px",
       },
       boxShadow: {
-        card: "0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.3)",
-        "card-hover": "0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4)",
-        glow: "0 0 24px 4px rgba(99, 102, 241, 0.3)",
-        "glow-strong": "0 0 32px 8px rgba(99, 102, 241, 0.4)",
-        "glow-green": "0 0 24px 4px rgba(34, 197, 94, 0.3)",
-        "glow-gold": "0 0 24px 4px rgba(245, 158, 11, 0.3)",
-        inner: "inset 0 2px 4px 0 rgb(0 0 0 / 0.3)",
-        xl: "0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.5)",
+        card: "0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04)",
+        raised: "0 8px 24px -8px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06)",
+        ring: "0 0 0 2px rgba(109,123,255,0.45)",
       },
-      backgroundImage: {
-        "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
-        "gradient-conic": "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
-        "gradient-shine": "linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)",
-      },
-      animation: {
-        "pulse-soft": "pulse-soft 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-        "fade-in":    "fade-in 0.3s ease-out",
-        "slide-up":   "slide-up 0.4s ease-out",
-        "slide-down": "slide-down 0.4s ease-out",
-        "scale-in":   "scale-in 0.2s ease-out",
-        "shimmer":    "shimmer 2s linear infinite",
-        "glow":       "glow 2s ease-in-out infinite alternate",
-        "float":      "float 3s ease-in-out infinite",
-        "gradient":   "gradient 8s ease infinite",
+      transitionTimingFunction: {
+        out: "cubic-bezier(0.23, 1, 0.32, 1)",
+        "in-out": "cubic-bezier(0.77, 0, 0.175, 1)",
       },
       keyframes: {
-        "pulse-soft": {
-          "0%, 100%": { opacity: "1" },
-          "50%":      { opacity: "0.7" },
+        "fade-up": {
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
         },
         "fade-in": {
           from: { opacity: "0" },
-          to:   { opacity: "1" },
-        },
-        "slide-up": {
-          from: { opacity: "0", transform: "translateY(16px)" },
-          to:   { opacity: "1", transform: "translateY(0)" },
-        },
-        "slide-down": {
-          from: { opacity: "0", transform: "translateY(-16px)" },
-          to:   { opacity: "1", transform: "translateY(0)" },
-        },
-        "scale-in": {
-          from: { opacity: "0", transform: "scale(0.95)" },
-          to:   { opacity: "1", transform: "scale(1)" },
+          to: { opacity: "1" },
         },
         shimmer: {
-          "0%": { backgroundPosition: "-200% 0" },
-          "100%": { backgroundPosition: "200% 0" },
+          "0%": { backgroundPosition: "-300% 0" },
+          "100%": { backgroundPosition: "300% 0" },
         },
-        glow: {
-          "0%": { boxShadow: "0 0 20px 2px rgba(99, 102, 241, 0.3)" },
-          "100%": { boxShadow: "0 0 32px 8px rgba(99, 102, 241, 0.5)" },
-        },
-        float: {
-          "0%, 100%": { transform: "translateY(0px)" },
-          "50%": { transform: "translateY(-10px)" },
-        },
-        gradient: {
-          "0%, 100%": { backgroundPosition: "0% 50%" },
-          "50%": { backgroundPosition: "100% 50%" },
+        "scale-in": {
+          from: { opacity: "0", transform: "scale(0.96)" },
+          to: { opacity: "1", transform: "scale(1)" },
         },
       },
-      backdropBlur: {
-        xs: "2px",
+      animation: {
+        "fade-up": "fade-up 320ms cubic-bezier(0.23,1,0.32,1) both",
+        "fade-in": "fade-in 200ms ease-out both",
+        "scale-in": "scale-in 160ms cubic-bezier(0.23,1,0.32,1) both",
+        shimmer: "shimmer 1.8s linear infinite",
       },
     },
   },

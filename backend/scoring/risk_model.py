@@ -1,317 +1,302 @@
 """
-ML Risk Assessment Model
-=========================
-Predicts risk level (Low/Medium/High) for mutual funds based on historical
-volatility, drawdown, and stability metrics.
+Risk model
+==========
+Assigns every scheme a 0–100 risk score and a SEBI-riskometer tier.
 
-Risk Categories
----------------
-- Low Risk    (0-33):  Stable, low volatility, small drawdowns
-- Medium Risk (34-66): Moderate volatility, acceptable drawdowns
-- High Risk   (67-100): High volatility, large drawdowns, unstable
+Why this is not machine learning
+--------------------------------
+The previous implementation trained an XGBoost regressor on labels it had
+computed itself, from the same features it then fed back in as inputs.  A
+model fitted to reproduce ``0.35·vol + 0.35·drawdown + 0.20·beta + 0.10·spread``
+learns exactly that formula, plus approximation error — so the ML added a
+model file, a SHAP dependency and a per-fund inference call, and subtracted
+accuracy.  (It also called ``df.fillna(df.median())`` on a single-row frame,
+where the median of a NaN is NaN, so missing inputs were never actually
+filled.)  It never ran in production either: every ``risk_level`` in the
+database was NULL.
 
-Training Features
------------------
-- Volatility metrics: 1Y volatility, rolling vol std dev
-- Drawdown metrics: Max drawdown, drawdown frequency, recovery time
-- Stability: Beta, return consistency, AUM volatility
-- Market conditions: Category volatility ranking
+Two further things were wrong in principle:
 
-Model
------
-XGBoost classifier predicting risk score 0-100, mapped to Low/Medium/High.
+* **Risk was ranked within a category.**  That makes the riskiest liquid fund
+  "High risk" and the safest small-cap fund "Low risk", which inverts what the
+  words mean.  Risk is an absolute property of a return distribution.
+* **Three tiers.**  Indian funds are labelled on SEBI's six-tier riskometer,
+  and investors read those exact words on the factsheet.
 
-Usage
------
-    model = RiskModel()
-    await model.train()
-    risk_score, risk_level = await model.predict_risk(scheme_id, as_of=date.today())
+So the model here is a transparent, absolute, monotone mapping from realised
+volatility, drawdown and market sensitivity onto the riskometer, with the
+anchor points calibrated to what each Indian fund category actually realises.
+Every output can be traced to an input by hand — which for a risk label is a
+feature, not a limitation.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import date, timedelta
-from pathlib import Path
-from typing import Any, Literal
+from datetime import date
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import text
 
-from backend.db.models import FundFeatures, FundScore, Scheme
-from backend.db.session import AsyncSessionLocal
+from backend.db.session import engine
 
-MODEL_PATH = Path("models/risk_scorer.ubj")
+MODEL_VERSION = "riskometer_v2"
 
-RiskLevel = Literal["Low", "Medium", "High"]
-
-# Risk feature columns
-RISK_FEATURES = [
-    "volatility_1y",
-    "max_drawdown_1y",
-    "drawdown_recovery_days",
-    "beta_1y",
-    "return_1m", "return_3m", "return_6m", "return_1y",  # for consistency calc
-    "aum_growth_3m",  # AUM stability
+RiskLevel = Literal[
+    "Low", "Low to Moderate", "Moderate", "Moderately High", "High", "Very High"
 ]
 
+#: SEBI's six-tier riskometer, in order.
+RISK_LEVELS: tuple[str, ...] = (
+    "Low", "Low to Moderate", "Moderate", "Moderately High", "High", "Very High",
+)
 
-# ── Risk level mapping ────────────────────────────────────────────────────────
+_LEVEL_CUTOFFS: tuple[tuple[float, str], ...] = (
+    (16.0, "Low"),
+    (32.0, "Low to Moderate"),
+    (48.0, "Moderate"),
+    (64.0, "Moderately High"),
+    (80.0, "High"),
+)
 
-def _risk_level(score: float) -> RiskLevel:
-    """Map 0-100 risk score to Low/Medium/High."""
-    if score <= 33:
-        return "Low"
-    if score <= 66:
-        return "Medium"
-    return "High"
+RISK_FEATURES: tuple[str, ...] = (
+    "volatility_1y",
+    "volatility_3y",
+    "max_drawdown_1y",
+    "max_drawdown_3y",
+    "downside_deviation_1y",
+    "beta_1y",
+    "var_95_1y",
+    "rolling_1y_worst",
+)
+
+# ── Calibration anchors ───────────────────────────────────────────────────────
+# (realised value, risk points).  Piecewise-linear between anchors, flat
+# outside them.  The volatility anchors are the observed annualised σ of each
+# Indian fund category, which is what makes the output map onto the tiers the
+# way a factsheet does.
+
+_VOLATILITY_ANCHORS = np.array(
+    [
+        [0.0, 0.0],
+        [0.35, 8.0],     # overnight
+        [1.0, 16.0],     # liquid / ultra short
+        [2.5, 26.0],     # low duration, arbitrage
+        [5.0, 36.0],     # corporate bond, dynamic bond
+        [8.0, 45.0],     # gilt, conservative hybrid
+        [11.0, 55.0],    # balanced advantage, multi-asset
+        [14.0, 65.0],    # large cap, index
+        [17.0, 74.0],    # flexi / multi cap
+        [20.0, 82.0],    # mid cap
+        [24.0, 90.0],    # small cap
+        [32.0, 97.0],    # single-sector, thematic
+        [50.0, 100.0],
+    ]
+)
+
+_DRAWDOWN_ANCHORS = np.array(
+    [
+        [0.0, 0.0],
+        [1.0, 10.0],
+        [3.0, 22.0],
+        [6.0, 34.0],
+        [10.0, 46.0],
+        [15.0, 58.0],
+        [22.0, 70.0],
+        [32.0, 84.0],
+        [45.0, 95.0],
+        [60.0, 100.0],
+    ]
+)
+
+_BETA_ANCHORS = np.array(
+    [
+        [0.0, 0.0],
+        [0.15, 15.0],
+        [0.40, 32.0],
+        [0.70, 48.0],
+        [1.00, 60.0],
+        [1.20, 72.0],
+        [1.50, 86.0],
+        [2.00, 100.0],
+    ]
+)
+
+#: Component weights. Volatility dominates because it is the most reliably
+#: measured; drawdown captures the tail that volatility understates.
+_WEIGHTS = {"volatility": 0.50, "drawdown": 0.32, "beta": 0.18}
 
 
-# ── Label computation (training targets) ──────────────────────────────────────
+def _interpolate(values: pd.Series, anchors: np.ndarray) -> pd.Series:
+    """Piecewise-linear map through the anchor table, clamped at both ends."""
+    numeric = pd.to_numeric(values, errors="coerce")
+    mapped = np.interp(numeric.to_numpy(dtype="float64"), anchors[:, 0], anchors[:, 1])
+    result = pd.Series(mapped, index=values.index, dtype="float64")
+    return result.where(numeric.notna())
 
-def _compute_risk_labels(df: pd.DataFrame) -> pd.Series:
+
+def risk_level_for(score: float | None) -> str | None:
+    if score is None or not np.isfinite(score):
+        return None
+    for cutoff, level in _LEVEL_CUTOFFS:
+        if score < cutoff:
+            return level
+    return "Very High"
+
+
+def compute_risk(frame: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute risk labels for training based on actual volatility and drawdown.
-    Higher volatility + larger drawdowns = higher risk score.
+    Risk score and component contributions for a frame of feature rows.
+
+    Prefers the 3-year window where available: a fund that has only seen a
+    calm year looks safer than it is, and the longer window is the one that
+    contains a real drawdown.
     """
-    # Normalize each metric to 0-100 percentile
-    vol_pct = df["volatility_1y"].rank(pct=True) * 100
-    dd_pct = df["max_drawdown_1y"].abs().rank(pct=True) * 100  # abs because drawdown is negative
-    beta_pct = df["beta_1y"].abs().rank(pct=True) * 100
-    
-    # Return consistency (lower std dev = lower risk)
-    df["_ret_std"] = df[["return_1m", "return_3m", "return_6m", "return_1y"]].std(axis=1)
-    ret_consistency_pct = (1 - df["_ret_std"].rank(pct=True)) * 100  # invert: lower std = lower risk
-    
-    # Weighted risk score
-    risk_score = (
-        vol_pct * 0.35
-        + dd_pct * 0.35
-        + beta_pct * 0.20
-        + ret_consistency_pct * 0.10
-    ).clip(0, 100)
-    
-    return risk_score
+    volatility = pd.to_numeric(frame.get("volatility_3y"), errors="coerce").fillna(
+        pd.to_numeric(frame.get("volatility_1y"), errors="coerce")
+    )
+    drawdown = pd.to_numeric(frame.get("max_drawdown_3y"), errors="coerce").fillna(
+        pd.to_numeric(frame.get("max_drawdown_1y"), errors="coerce")
+    ).abs()
+    beta = pd.to_numeric(frame.get("beta_1y"), errors="coerce").abs()
+
+    parts = pd.DataFrame(index=frame.index)
+    parts["risk_volatility"] = _interpolate(volatility, _VOLATILITY_ANCHORS)
+    parts["risk_drawdown"] = _interpolate(drawdown, _DRAWDOWN_ANCHORS)
+    parts["risk_beta"] = _interpolate(beta, _BETA_ANCHORS)
+
+    numerator = pd.Series(0.0, index=frame.index, dtype="float64")
+    denominator = pd.Series(0.0, index=frame.index, dtype="float64")
+    for key, weight in _WEIGHTS.items():
+        component = parts[f"risk_{key}"]
+        present = component.notna()
+        numerator = numerator.add(component.fillna(0.0) * weight * present, fill_value=0.0)
+        denominator = denominator.add(weight * present, fill_value=0.0)
+
+    parts["risk_score"] = numerator.divide(denominator.where(denominator > 0)).clip(0, 100)
+    parts["risk_confidence"] = denominator / sum(_WEIGHTS.values())
+    parts["risk_level"] = parts["risk_score"].map(risk_level_for)
+    return parts
 
 
-# ── Main risk model ───────────────────────────────────────────────────────────
+def explain(row: pd.Series) -> str:
+    """Per-component contribution, in the units a person can check."""
+    return json.dumps(
+        {
+            "model_version": MODEL_VERSION,
+            "components": {
+                "volatility": _round(row.get("risk_volatility")),
+                "drawdown": _round(row.get("risk_drawdown")),
+                "beta": _round(row.get("risk_beta")),
+            },
+            "weights": _WEIGHTS,
+            "inputs": {
+                "volatility_pct": _round(row.get("volatility_3y") or row.get("volatility_1y")),
+                "max_drawdown_pct": _round(row.get("max_drawdown_3y") or row.get("max_drawdown_1y")),
+                "beta": _round(row.get("beta_1y")),
+            },
+            "confidence": _round(row.get("risk_confidence"), 3),
+        }
+    )
+
+
+def _round(value, digits: int = 2):
+    if value is None or (isinstance(value, float) and not np.isfinite(value)) or pd.isna(value):
+        return None
+    return round(float(value), digits)
+
 
 class RiskModel:
+    """Scores realised risk for the investable universe."""
 
-    def __init__(self) -> None:
-        self._model = None
-        self._explainer = None
-
-    # ── Training ──────────────────────────────────────────────────────────────
-
-    async def train(
-        self,
-        cutoff_date: date | None = None,
-        xgb_params: dict | None = None,
-    ) -> dict[str, float]:
-        """
-        Train XGBoost regressor to predict risk score 0-100.
-        Returns evaluation metrics.
-        """
-        try:
-            import xgboost as xgb
-            from sklearn.metrics import mean_absolute_error, r2_score
-        except ImportError as e:
-            raise RuntimeError(f"ML deps not installed: {e}") from e
-
-        if cutoff_date is None:
-            cutoff_date = date.today() - timedelta(days=30)
-
-        # Load all historical features
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(FundFeatures, Scheme.category)
-                .join(Scheme, FundFeatures.scheme_id == Scheme.id)
-                .where(FundFeatures.feature_date < cutoff_date)
-                .order_by(FundFeatures.feature_date)
-            )
-            rows = result.all()
-
-        if len(rows) < 100:
-            raise ValueError(f"Insufficient training data: only {len(rows)} rows.")
-
-        logger.info(f"Building risk training dataset from {len(rows)} feature rows …")
-
-        # Build DataFrame
-        records: list[dict] = []
-        for feat, category in rows:
-            d = {col: getattr(feat, col, None) for col in RISK_FEATURES}
-            d["category"] = category
-            records.append(d)
-
-        df = pd.DataFrame(records)
-        
-        # Compute risk labels
-        df["_risk_target"] = _compute_risk_labels(df)
-        
-        # Prepare features
-        X = df[RISK_FEATURES].fillna(df[RISK_FEATURES].median())
-        y = df["_risk_target"]
-
-        # Time-based split
-        split_idx = int(len(X) * 0.80)
-        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-        # Train XGBoost
-        params = xgb_params or {
-            "n_estimators": 200,
-            "learning_rate": 0.05,
-            "max_depth": 4,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_alpha": 0.1,
-            "reg_lambda": 1.0,
-            "random_state": 42,
-            "n_jobs": -1,
-        }
-
-        model = xgb.XGBRegressor(**params)
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_test, y_test)],
-            verbose=False,
+    async def load_frame(self, as_of: date) -> pd.DataFrame:
+        columns = ", ".join(f"f.{c}" for c in RISK_FEATURES)
+        sql = text(
+            f"""
+            SELECT f.scheme_id, {columns}
+              FROM fund_features f
+              JOIN scheme s ON s.id = f.scheme_id
+             WHERE f.feature_date = :as_of
+               AND s.is_investable = 1
+            """
         )
+        async with engine.connect() as conn:
+            result = await conn.execute(sql, {"as_of": as_of.isoformat()})
+            rows = result.all()
+            names = list(result.keys())
+        if not rows:
+            return pd.DataFrame(columns=["scheme_id", *RISK_FEATURES])
+        return pd.DataFrame(rows, columns=names)
 
-        # Evaluate
-        y_pred = model.predict(X_test)
-        metrics = {
-            "mae": float(mean_absolute_error(y_test, y_pred)),
-            "r2": float(r2_score(y_test, y_pred)),
-            "n_train": len(X_train),
-            "n_test": len(X_test),
-        }
-
-        logger.info(f"Risk model training done: MAE={metrics['mae']:.4f}, R²={metrics['r2']:.4f}")
-
-        # Save model
-        MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-        model.save_model(str(MODEL_PATH))
-        self._model = model
-        logger.info(f"Risk model saved to {MODEL_PATH}")
-
-        return metrics
-
-    # ── Inference ─────────────────────────────────────────────────────────────
-
-    def load(self) -> None:
-        """Load a previously trained risk model from disk."""
-        try:
-            import xgboost as xgb
-        except ImportError as e:
-            raise RuntimeError(f"xgboost not installed: {e}") from e
-        if not MODEL_PATH.exists():
-            raise FileNotFoundError(f"No risk model at {MODEL_PATH}. Run train() first.")
-        self._model = xgb.XGBRegressor()
-        self._model.load_model(str(MODEL_PATH))
-        logger.info(f"Risk model loaded from {MODEL_PATH}")
-
-    def predict_single(
-        self,
-        feature_dict: dict[str, Any],
-    ) -> tuple[float, RiskLevel, dict]:
-        """
-        Predict risk for a single feature dict.
-        Returns (risk_score 0-100, risk_level, shap_dict).
-        """
-        if self._model is None:
-            self.load()
-        import shap
-
-        df = pd.DataFrame([{col: feature_dict.get(col) for col in RISK_FEATURES}])
-        df = df.fillna(df.median())
-
-        raw_pred: float = float(self._model.predict(df)[0])
-        risk_score = float(np.clip(raw_pred, 0, 100))
-        risk_level = _risk_level(risk_score)
-
-        # SHAP explanation
-        if self._explainer is None:
-            self._explainer = shap.TreeExplainer(self._model)
-        shap_values = self._explainer.shap_values(df)
-        shap_dict = {
-            col: round(float(shap_values[0][i]), 4)
-            for i, col in enumerate(RISK_FEATURES)
-        }
-
-        return risk_score, risk_level, shap_dict
+    def predict_single(self, features: dict) -> tuple[float, str, dict]:
+        """Risk for one feature dict — used by tests and ad-hoc inspection."""
+        frame = pd.DataFrame([{c: features.get(c) for c in RISK_FEATURES}])
+        parts = compute_risk(frame)
+        merged = pd.concat([frame, parts], axis=1).iloc[0]
+        score = float(merged["risk_score"]) if pd.notna(merged["risk_score"]) else 50.0
+        return score, risk_level_for(score) or "Moderate", json.loads(explain(merged))
 
     async def score_all_risks(self, as_of: date | None = None) -> int:
-        """
-        Score risk for all schemes with features on `as_of` date.
-        Updates FundScore with risk_score and risk_level.
-        """
-        if as_of is None:
-            as_of = date.today()
-
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(FundFeatures)
-                .where(FundFeatures.feature_date == as_of)
-            )
-            feats = list(result.scalars().all())
-
-        if not feats:
-            logger.warning(f"No features for {as_of}.")
+        as_of = as_of or date.today()
+        frame = await self.load_frame(as_of)
+        if frame.empty:
+            logger.warning(f"No investable features for {as_of} — nothing to risk-score.")
             return 0
 
-        written = 0
-        async with AsyncSessionLocal() as session:
-            for feat in feats:
-                d = {col: getattr(feat, col, None) for col in RISK_FEATURES}
-                try:
-                    risk_score, risk_level, shap_dict = self.predict_single(d)
-                except Exception as exc:
-                    logger.warning(f"Risk predict failed for scheme {feat.scheme_id}: {exc}")
-                    continue
+        parts = compute_risk(frame)
+        merged = pd.concat([frame, parts], axis=1)
+        merged = merged[merged["risk_score"].notna()]
+        if merged.empty:
+            logger.warning("Risk scoring produced no usable rows.")
+            return 0
 
-                # Update existing FundScore or create if missing
-                existing = await session.scalar(
-                    select(FundScore)
-                    .where(FundScore.scheme_id == feat.scheme_id)
-                    .where(FundScore.score_date == as_of)
-                )
-                if existing:
-                    existing.risk_score = risk_score
-                    existing.risk_level = risk_level
-                    # Store risk SHAP in a separate field or append to existing shap_json
-                    risk_shap_str = json.dumps({"risk_shap": shap_dict})
-                    existing.risk_shap_json = risk_shap_str
-                else:
-                    # Create minimal score entry with risk only
-                    session.add(FundScore(
-                        scheme_id=feat.scheme_id,
-                        score_date=as_of,
-                        composite_score=50.0,  # placeholder
-                        conviction="Hold",
-                        model_version="risk_v1",
-                        risk_score=risk_score,
-                        risk_level=risk_level,
-                        risk_shap_json=json.dumps({"risk_shap": shap_dict}),
-                    ))
-                written += 1
+        payload = [
+            {
+                "scheme_id": int(row["scheme_id"]),
+                "score_date": as_of.isoformat(),
+                "risk_score": round(float(row["risk_score"]), 2),
+                "risk_level": row["risk_level"],
+                "risk_shap_json": explain(row),
+            }
+            for _, row in merged.iterrows()
+        ]
 
-            await session.commit()
+        sql = text(
+            """
+            UPDATE fund_score
+               SET risk_score = :risk_score,
+                   risk_level = :risk_level,
+                   risk_shap_json = :risk_shap_json
+             WHERE scheme_id = :scheme_id AND score_date = :score_date
+            """
+        )
+        async with engine.begin() as conn:
+            for start in range(0, len(payload), 2000):
+                await conn.execute(sql, payload[start : start + 2000])
 
-        logger.info(f"Risk scoring complete: {written} scores updated.")
-        return written
+        distribution = merged["risk_level"].value_counts().to_dict()
+        logger.info(f"Risk scoring complete: {len(payload)} rows · {distribution}")
+        return len(payload)
+
+    # ── Compatibility shims ──────────────────────────────────────────────────
+
+    def load(self) -> None:
+        """No model artefact to load — the mapping is the model."""
+
+    async def train(self, *_, **__) -> dict[str, float]:
+        raise NotImplementedError(
+            "riskometer_v2 is a calibrated deterministic mapping; there is nothing to fit. "
+            "Adjust the anchor tables in this module to recalibrate."
+        )
 
 
-# ── Standalone training entry point ──────────────────────────────────────────
+async def rescore_risk(as_of: date | None = None) -> int:
+    return await RiskModel().score_all_risks(as_of=as_of)
+
 
 if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        model = RiskModel()
-        metrics = await model.train()
-        print(f"Risk model training metrics: {metrics}")
-
-    asyncio.run(main())
+    asyncio.run(rescore_risk())

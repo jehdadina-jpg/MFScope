@@ -9,176 +9,121 @@
 
   html {
     color-scheme: dark;
-    scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-background text-text-primary font-sans;
+    @apply bg-canvas text-ink font-sans antialiased;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.08) 0px, transparent 50%);
-    background-attachment: fixed;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
   }
 
-  /* Monospace numbers */
+  ::selection {
+    background: rgba(109, 123, 255, 0.28);
+  }
+
   .num {
     @apply font-mono tabular-nums;
+    font-feature-settings: "tnum" 1, "zero" 1;
   }
 
-  /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-border-strong rounded-full;
-    transition: background 0.2s;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-accent;
+    background: rgba(255, 255, 255, 0.18);
+    background-clip: padding-box;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #0a0b0d, 0 0 0 4px rgba(109, 123, 255, 0.55);
+    border-radius: 6px;
   }
 }
 
 @layer components {
-  /* Modern chip/badge */
+  /* Base card: one hairline, no gradient soup, no glow-on-everything. */
+  .surface-card {
+    @apply bg-surface border border-stroke rounded-card shadow-card;
+  }
+
+  .interactive-card {
+    @apply surface-card transition-[border-color,background-color,transform] duration-200 ease-out;
+  }
+  .interactive-card:hover {
+    @apply border-stroke-strong bg-surface-raised;
+  }
+  .interactive-card:active {
+    transform: scale(0.995);
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium
+           transition-[background-color,border-color,transform,color] duration-150 ease-out select-none;
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white hover:bg-brand-bright px-3.5 py-2;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-ink-dim border border-stroke hover:border-stroke-strong hover:text-ink hover:bg-surface-raised px-3.5 py-2;
+  }
+  .btn-ghost-active {
+    @apply btn bg-brand-soft text-brand-bright border border-brand/40 px-3.5 py-2;
+  }
+
   .chip {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
-           border border-border backdrop-blur-sm transition-all duration-200 cursor-pointer select-none
-           bg-background-subtle/50;
-    @apply text-text-secondary hover:border-accent hover:text-text-primary hover:bg-background-muted/70
-           hover:shadow-md hover:scale-105;
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium
+           border border-stroke text-ink-dim bg-surface
+           hover:border-stroke-strong hover:text-ink
+           transition-[border-color,background-color,color] duration-150 ease-out cursor-pointer select-none;
   }
-  .chip-active {
-    @apply border-accent text-accent bg-accent/10 shadow-glow;
-  }
-
-  /* Glassmorphism card */
-  .card {
-    @apply bg-background-subtle/80 backdrop-blur-md border border-border rounded-xl shadow-card
-           transition-all duration-300;
-    @apply hover:border-border-accent hover:shadow-card-hover hover:bg-background-subtle/90;
-    position: relative;
-    overflow: hidden;
-  }
-  
-  .card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
-    transition: left 0.5s;
-  }
-  
-  .card:hover::before {
-    left: 100%;
+  .chip[data-active="true"] {
+    @apply border-brand/50 text-brand-bright bg-brand-soft;
   }
 
-  /* Premium card with gradient border */
-  .card-premium {
-    @apply card;
-    background: linear-gradient(135deg, rgba(19, 23, 32, 0.9), rgba(26, 31, 46, 0.9));
-    border: 1px solid transparent;
-    background-clip: padding-box;
-    position: relative;
+  .field {
+    @apply bg-surface border border-stroke rounded-lg text-sm text-ink placeholder:text-ink-faint
+           focus-visible:border-brand/50 transition-colors duration-150;
   }
-  
-  .card-premium::after {
-    content: '';
+
+  .skeleton {
+    @apply relative overflow-hidden bg-surface-raised rounded-md;
+  }
+  .skeleton::after {
+    content: "";
     position: absolute;
     inset: 0;
-    border-radius: 1rem;
-    padding: 1px;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(139, 92, 246, 0.5), rgba(236, 72, 153, 0.5));
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.3s;
-  }
-  
-  .card-premium:hover::after {
-    opacity: 1;
-  }
-
-  /* Section header */
-  .section-label {
-    @apply text-xs font-bold uppercase tracking-widest text-text-secondary;
-    letter-spacing: 0.1em;
-  }
-
-  /* Gradient text */
-  .gradient-text {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-gradient-from via-gradient-via to-gradient-to;
-    background-size: 200% auto;
-  }
-
-  /* Glow button */
-  .btn-glow {
-    @apply px-6 py-3 rounded-xl font-semibold text-white
-           bg-gradient-to-r from-accent via-accent-bright to-accent
-           shadow-glow hover:shadow-glow-strong
-           transition-all duration-300 hover:scale-105;
-    background-size: 200% auto;
-  }
-  
-  .btn-glow:hover {
-    animation: gradient 2s ease infinite;
-  }
-
-  /* Floating animation for special elements */
-  .float {
-    animation: float 3s ease-in-out infinite;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.06) 50%,
+      transparent 100%
+    );
+    background-size: 300% 100%;
+    animation: shimmer 1.8s linear infinite;
   }
 }
 
-/* Shine effect on hover */
-@keyframes shine {
-  to {
-    background-position: 200% center;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
-}
-
-.shine {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.1),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: shine 3s linear infinite;
-}
-
-/* Spotlight effect */
-.spotlight {
-  position: relative;
-}
-
-.spotlight::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-    rgba(99, 102, 241, 0.15),
-    transparent 50%
-  );
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-  border-radius: inherit;
-}
-
-.spotlight:hover::before {
-  opacity: 1;
 }

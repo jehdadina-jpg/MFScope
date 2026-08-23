@@ -1,52 +1,59 @@
-import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { BarChart2 } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { LineChart } from "lucide-react";
+import { useStats } from "@/hooks/useMeta";
+import { fmtDateShort } from "@/lib/utils";
 
-interface LayoutProps {
-  children: ReactNode;
-}
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const { data: stats } = useStats();
+  const isHome = location.pathname === "/";
 
-export default function Layout({ children }: LayoutProps) {
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      {/* ── Top nav ────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link
-            to="/"
-            className="flex items-center gap-2 text-text-primary hover:text-accent transition-colors"
-          >
-            <BarChart2 size={18} className="text-accent" aria-hidden />
-            <span className="font-semibold text-base tracking-tight">MFScope</span>
-            <span className="hidden sm:inline text-xs text-text-muted font-normal">
-              India MF Intelligence
+    <div className="min-h-screen flex flex-col">
+      <header className="sticky top-0 z-40 border-b border-stroke bg-canvas/85 backdrop-blur-md">
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+          <Link to="/" className="flex items-center gap-2 shrink-0 group">
+            <span className="grid place-items-center w-7 h-7 rounded-md bg-brand text-white transition-transform duration-150 ease-out group-active:scale-90">
+              <LineChart size={15} strokeWidth={2.5} />
             </span>
+            <span className="text-[15px] font-semibold tracking-tight">MFScope</span>
           </Link>
 
-          <nav className="flex items-center gap-4 text-sm text-text-secondary">
-            <Link
-              to="/"
-              className="hover:text-text-primary transition-colors"
-              aria-label="All funds"
+          <div className="hidden md:flex items-center gap-1 text-2xs text-ink-faint">
+            {stats && (
+              <>
+                <span className="num text-ink-dim">{stats.investable_schemes.toLocaleString("en-IN")}</span>
+                <span>funds scored</span>
+                <span className="mx-2 text-stroke-strong">·</span>
+                <span>NAV as of</span>
+                <span className="num text-ink-dim">{fmtDateShort(stats.latest_nav_date)}</span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-ink-faint hover:text-ink-dim transition-colors duration-150 hidden sm:block"
             >
-              Funds
-            </Link>
-            <span className="text-2xs px-2 py-0.5 rounded-badge bg-accent-dim text-accent border border-accent/30 font-medium">
-              Research
-            </span>
-          </nav>
+              API
+            </a>
+          </div>
         </div>
       </header>
 
-      {/* ── Main content ───────────────────────────────────────────────── */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
-        {children}
-      </main>
+      <main className="flex-1 mx-auto w-full max-w-[1400px] px-4 sm:px-6 py-6">{children}</main>
 
-      {/* ── Footer ─────────────────────────────────────────────────────── */}
-      <footer className="border-t border-border py-4 text-center text-xs text-text-muted">
-        MFScope · Educational research tool · Data via AMFI &amp; public RSS feeds · Not investment advice
-      </footer>
+      {isHome && (
+        <footer className="border-t border-stroke mt-12">
+          <div className="mx-auto max-w-[1400px] px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-2xs text-ink-faint">
+            <span>MFScope — independent research tooling. Not investment advice.</span>
+            <span>Data: AMFI · mfapi.in</span>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }

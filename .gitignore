@@ -29,17 +29,6 @@ secrets.json
 *.sqlite
 *.sqlite3
 
-# ── ML artifacts ──────────────────────────────
-models/*.pkl
-models/*.joblib
-models/*.json
-models/*.ubj
-!models/.gitkeep
-
-# ── Jupyter ───────────────────────────────────
-.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
-
 # ── Node / Frontend ───────────────────────────
 node_modules/
 frontend/node_modules/

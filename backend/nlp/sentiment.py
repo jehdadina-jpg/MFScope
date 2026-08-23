@@ -37,27 +37,44 @@ from loguru import logger
 from sqlalchemy import select
 
 from backend.config import settings
-from backend.db.models import FundCategory, NewsArticle, NewsSentiment, Scheme, SentimentLabel
+from backend.db.models import NewsArticle, NewsSentiment, Scheme, SentimentLabel
 from backend.db.session import AsyncSessionLocal
 
 
 # ── Sector keyword → category mapping ────────────────────────────────────────
 
 _SECTOR_MAP: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"defense|defence|military|army|bharat forge|hal\b|drdo", re.I), FundCategory.DEFENSE.value),
-    (re.compile(r"psu|bhel|ongc|coal india|ntpc|power grid", re.I), FundCategory.PSU.value),
-    (re.compile(r"bank|nbfc|hdfc|icici|sbi|kotak|axis bank|financial service", re.I), FundCategory.BANKING_FINANCIAL.value),
-    (re.compile(r"pharma|drug|cipla|sun pharma|divi|healthcare|hospital", re.I), FundCategory.PHARMA_HEALTHCARE.value),
-    (re.compile(r"\bit\b|infosy|tcs|wipro|hcl tech|tech mahindra|software", re.I), FundCategory.IT_TECHNOLOGY.value),
-    (re.compile(r"infra|l&t|larsen|road|highway|cement|steel", re.I), FundCategory.INFRASTRUCTURE.value),
-    (re.compile(r"fmcg|consumer|hindustan unilever|nestle|itc\b|dabur", re.I), FundCategory.CONSUMPTION.value),
-    (re.compile(r"energy|oil|gas|reliance|bpcl|ioc|ongc|power", re.I), FundCategory.ENERGY.value),
-    (re.compile(r"nifty 50|sensex|large.?cap", re.I), FundCategory.LARGE_CAP.value),
-    (re.compile(r"mid.?cap|nifty midcap", re.I), FundCategory.MID_CAP.value),
-    (re.compile(r"small.?cap|nifty smallcap", re.I), FundCategory.SMALL_CAP.value),
-    (re.compile(r"elss|tax sav|80c", re.I), FundCategory.ELSS.value),
-    (re.compile(r"gilt|gsec|government bond|treasury", re.I), FundCategory.GILT.value),
-    (re.compile(r"liquid fund|overnight fund|money market", re.I), FundCategory.LIQUID.value),
+    # Category strings must match the canonical vocabulary the schemes are
+    # actually stored under — a tag that matches no scheme produces sentiment
+    # rows that the feature builder can never join to.
+    (re.compile(r"defen[cs]e|military|army|hal|drdo|bharat forge", re.I),
+     "Sectoral - Defence"),
+    (re.compile(r"psu|bhel|ongc|coal india|ntpc|power grid|public sector", re.I),
+     "Sectoral - PSU"),
+    (re.compile(r"bank|banking|nbfc|hdfc bank|icici bank|axis bank|"
+                r"financial service|bfsi", re.I),
+     "Sectoral - Banking & Financial"),
+    (re.compile(r"pharma|drug|cipla|sun pharma|divi|healthcare|hospital", re.I),
+     "Sectoral - Pharma & Healthcare"),
+    (re.compile(r"it|infosys|tcs|wipro|hcl tech|tech mahindra|software", re.I),
+     "Sectoral - Technology"),
+    (re.compile(r"infra|infrastructure|larsen|l&t|highway|cement|steel", re.I),
+     "Sectoral - Infrastructure"),
+    (re.compile(r"fmcg|consumer|hindustan unilever|nestle|itc|dabur", re.I),
+     "Sectoral - Consumption"),
+    (re.compile(r"energy|oil|natural gas|bpcl|ioc|petroleum", re.I),
+     "Sectoral - Energy & Resources"),
+    (re.compile(r"auto|automobile|maruti|tata motors|manufactur", re.I),
+     "Sectoral - Manufacturing & Auto"),
+    (re.compile(r"nifty 50|sensex|large.?cap|bluechip", re.I), "Large Cap"),
+    (re.compile(r"mid.?cap", re.I), "Mid Cap"),
+    (re.compile(r"small.?cap", re.I), "Small Cap"),
+    (re.compile(r"flexi.?cap", re.I), "Flexi Cap"),
+    (re.compile(r"elss|tax sav|80c", re.I), "ELSS"),
+    (re.compile(r"gilt|g-?sec|government bond|treasury", re.I), "Gilt"),
+    (re.compile(r"liquid fund|overnight fund|money market", re.I), "Liquid"),
+    (re.compile(r"gold", re.I), "Gold"),
+    (re.compile(r"silver", re.I), "Silver"),
 ]
 
 

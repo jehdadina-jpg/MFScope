@@ -1,136 +1,120 @@
-# MFScope — India Mutual Fund Intelligence Engine
+# MFScope — Indian Mutual Fund Intelligence Engine
 
-> Scrape · Score · Visualise — a full-stack research tool for Indian mutual funds.
-
----
+Scrape → score → visualize. A research tool that ranks ~3,900 investable
+Indian mutual funds against real peers, with every number traceable to the
+math that produced it.
 
 ## What it does
 
-- **Data Pipeline** — pulls daily NAV from AMFI, secondary metadata from aggregators, and financial news via RSS
-- **ML Scoring Engine** — engineers 30+ features (returns, risk-adjusted metrics, sentiment, fundamentals) and produces a 5-tier conviction label per fund: `Strong Buy → Buy → Hold → Sell → Strong Sell`
-- **Dark-Mode Dashboard** — React + TypeScript minimal fintech UI; browse by category, drill into a fund, see the score + why
-
----
+- **Ingestion** — pulls AMFI's daily NAV file (which carries the fund's own
+  SEBI category and AMC), plus years of per-scheme history from `mfapi.in`.
+- **Universe hygiene** — filters ~37,000 raw scheme rows down to the ~3,900
+  that are actually investable today: live, open-ended, Growth-option,
+  enough history to measure. Matured FMPs, IDCW payout share classes, and
+  dormant plans are excluded so they can't distort a peer ranking.
+- **Analytics** — corporate-action-adjusted NAV series, CAGR vs. absolute
+  returns depending on horizon, Sharpe/Sortino/alpha/beta/drawdown, rolling
+  consistency, and a synthesized market benchmark from index-fund NAV.
+- **Scoring** — a peer-percentile composite score (not a raw blend — see
+  `backend/scoring/rule_based.py` for why), with missing inputs dropped and
+  reported rather than imputed into a fake number.
+- **Risk** — a transparent, calibrated mapping onto SEBI's six-tier
+  riskometer (Low → Very High), not a black-box model trained on its own
+  labels.
+- **API** — FastAPI over the scored universe, with peer stats, benchmark
+  comparison series, and full score/risk explainability on every fund.
+- **Frontend** — React + TypeScript + Vite dashboard: browse, filter, sort,
+  compare, and drill into exactly how a fund's score was built.
 
 ## Stack
 
 | Layer | Choice |
 |---|---|
-| Backend language | Python 3.11+ |
-| Scraping | httpx, BeautifulSoup4, Playwright, feedparser |
-| Database | PostgreSQL (SQLite for MVP) via SQLAlchemy async |
-| ML | XGBoost / LightGBM + SHAP |
-| NLP | FinBERT (ProsusAI/finbert) or VADER |
-| API | FastAPI + Uvicorn |
-| Frontend | React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui |
-| Charts | Recharts |
-| Deployment | Backend → Railway/Render · Frontend → Vercel · DB → Supabase/Neon |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy (async), SQLite (WAL) |
+| Analytics | pandas, numpy — pure functions, no ML in the risk/score path |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Recharts |
+| Scheduling | APScheduler (optional; disabled by default, see below) |
 
----
+## Project layout
 
-## Quick Start
+```
+backend/
+  analytics/         # pure functions: NAV hygiene, metrics, taxonomy
+  api/                # FastAPI app, routes, response schemas
+  db/                 # SQLAlchemy models, session, schema reconciliation
+  features/           # feature_builder.py — orchestrates analytics → DB
+  ingestion/           # AMFI client, universe refresh, scheduler, news
+  nlp/                 # sentiment pipeline (FinBERT / VADER)
+  scoring/            # rule_based.py (composite score), risk_model.py
+frontend/
+  src/
+    components/        # FundCard, FilterBar, ComparisonChart, breakdowns…
+    pages/              # HomePage, FundDetailPage
+    hooks/              # data-fetching hooks
+    lib/                # typed API client, formatters
+scripts/
+  pipeline.py         # run the full nav → universe → features → scores pipeline
+  backfill_history.py # pull years of NAV history for the investable universe
+tests/                # pytest suite
+alembic/              # Postgres migration path (SQLite dev DB uses db/migrate.py)
+```
+
+## Quick start
 
 ### Backend
 
 ```bash
-# 1. Create a virtual environment
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# 2. Install dependencies
+# from the project root
 pip install -e ".[dev]"
+cp .env.example .env          # defaults work for local SQLite
 
-# 3. Install Playwright browsers (only needed if using JS scraping)
-playwright install chromium
+# one-time: pull history and score the universe
+python -m scripts.pipeline
 
-# 4. Configure environment
-cp .env.example .env
-# edit .env with your DATABASE_URL etc.
-
-# 5. Run DB migrations
-alembic upgrade head
-
-# 6. Start the API server
+# serve the API
 uvicorn backend.api.main:app --reload --port 8000
-
-# 7. (Optional) Run the scheduler as a standalone process
-python -m backend.ingestion.scheduler
 ```
+
+The scheduler that re-runs the pipeline automatically is **off by default**
+(a stray import used to start it on every `--reload` restart). Set
+`MFSCOPE_ENABLE_SCHEDULER=1` to enable the nightly job, or re-run
+`python -m scripts.pipeline` manually / via cron.
 
 ### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev          # starts Vite dev server at http://localhost:5173
+npm run dev          # http://localhost:5173, proxies /api to :8000
 ```
 
----
+## Data pipeline stages
 
-## Project Structure
+Run all of them, or one at a time with `python -m scripts.pipeline --stage <name>`:
 
-```
-mfscope/
-├── backend/
-│   ├── ingestion/
-│   │   ├── amfi_client.py       # AMFI NAV + scheme master
-│   │   ├── news_scraper.py      # RSS news ingestion
-│   │   └── scheduler.py        # APScheduler jobs
-│   ├── nlp/
-│   │   └── sentiment.py        # FinBERT / VADER sentiment
-│   ├── features/
-│   │   └── feature_builder.py  # 30+ engineered features
-│   ├── scoring/
-│   │   ├── rule_based.py       # Weighted composite scorer (v1)
-│   │   └── ml_model.py         # XGBoost learned model (v2)
-│   ├── api/
-│   │   └── main.py             # FastAPI routes
-│   └── db/
-│       └── models.py           # SQLAlchemy ORM models
-├── frontend/
-│   └── src/
-│       ├── components/         # ScoreBadge, FundCard, SparkLine, CategoryFilter
-│       ├── pages/              # Home, FundDetail
-│       └── lib/                # API client, hooks
-├── notebooks/
-│   └── model_exploration.ipynb
-├── tests/
-├── alembic/
-├── models/                     # Saved ML model artifacts (.gitkeep)
-├── pyproject.toml
-└── .env.example
-```
+1. **nav** — download `NAVAll.txt`, sync scheme master + today's NAV.
+2. **universe** — reclassify schemes AMFI didn't classify, refresh NAV
+   summaries, recompute the investable-universe flag.
+3. **features** — rebuild the point-in-time metric vector for every
+   investable scheme (returns, risk, momentum, sentiment).
+4. **scores** — composite score + peer rank, then the riskometer.
 
----
+`python -m scripts.backfill_history` pulls multi-year NAV history for
+schemes that only have AMFI's daily print so far — needed once after a fresh
+clone, since AMFI's file only carries the current day.
 
-## Data Sources
+## Notes on accuracy
 
-| Source | What we use | Notes |
-|---|---|---|
-| AMFI (`amfiindia.com`) | Daily NAV, scheme master | Primary, ToS-safe, always free |
-| mfapi.in | Historical NAV per scheme | Free community API |
-| Moneycontrol | AUM, expense ratio, fund manager | Scrape carefully, respect robots.txt |
-| Value Research Online | Category rank, portfolio composition | Factual data only |
-| ET Markets / LiveMint / BS | News headlines + summaries | RSS feeds only |
-
----
-
-## Scoring Model (v1 — Rule-Based)
-
-Each fund scored 0–100 within its category peer group:
-
-| Component | Weight | Features |
-|---|---|---|
-| Risk-adjusted returns | 40% | Sharpe, Sortino, alpha |
-| Consistency | 20% | Rolling return std dev, max drawdown |
-| Cost efficiency | 15% | Expense ratio (inverted) |
-| News sentiment | 15% | FinBERT 7-day + 30-day rolling |
-| Stability | 10% | AUM trend, manager tenure |
-
-Score → Label mapping: 80–100 Strong Buy · 60–79 Buy · 40–59 Hold · 20–39 Sell · 0–19 Strong Sell
-
----
+- Sub-1-year returns are absolute; 1-year-and-longer returns are CAGR.
+  Mixing the two (annualizing a 1-month move) was the source of the
+  multi-million-percent "returns" the old pipeline produced.
+- The composite score is a **peer percentile**, disclosed alongside the peer
+  group and count it was computed from. A fund is never scored against a
+  peer group of fewer than a handful of comparable funds.
+- Corporate actions (IDCW payouts, splits) are detected relative to a fund's
+  own trailing volatility, not a single global threshold — a 20% single-day
+  move in a silver fund is normal; the same move in a liquid fund is not.
 
 ## License
 
-MIT — for personal/educational use. Always check data source ToS before any commercial use.
+MIT — for personal/educational use. Verify data source ToS before commercial use.

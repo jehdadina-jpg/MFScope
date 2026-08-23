@@ -58,45 +58,35 @@ class SentimentLabel(str, enum.Enum):
     NEUTRAL = "neutral"
 
 
-class FundCategory(str, enum.Enum):
-    # Equity
-    LARGE_CAP = "Large Cap"
-    MID_CAP = "Mid Cap"
-    SMALL_CAP = "Small Cap"
-    LARGE_MID_CAP = "Large & Mid Cap"
-    FLEXI_CAP = "Flexi Cap"
-    MULTI_CAP = "Multi Cap"
-    ELSS = "ELSS"
-    # Sectoral / Thematic
-    DEFENSE = "Defense"
-    PSU = "PSU"
-    BANKING_FINANCIAL = "Banking & Financial Services"
-    PHARMA_HEALTHCARE = "Pharma & Healthcare"
-    IT_TECHNOLOGY = "IT/Technology"
-    INFRASTRUCTURE = "Infrastructure"
-    CONSUMPTION = "Consumption"
-    ENERGY = "Energy"
-    SECTORAL_OTHER = "Sectoral/Thematic Other"
-    # Debt
-    LIQUID = "Liquid"
-    OVERNIGHT = "Overnight"
-    SHORT_DURATION = "Short Duration"
-    CORPORATE_BOND = "Corporate Bond"
-    GILT = "Gilt"
-    DEBT_OTHER = "Debt Other"
-    # Hybrid
-    AGGRESSIVE_HYBRID = "Aggressive Hybrid"
-    BALANCED_ADVANTAGE = "Balanced Advantage"
-    MULTI_ASSET = "Multi-Asset"
-    # Index / Passive
-    INDEX_NIFTY50 = "Index - Nifty 50"
-    INDEX_SENSEX = "Index - Sensex"
-    INDEX_NIFTY_NEXT50 = "Index - Nifty Next 50"
-    INDEX_OTHER = "Index Other"
-    # International
-    INTERNATIONAL = "International/FoF"
-    # Unknown
+class AssetClass(str, enum.Enum):
+    """Top-level bucket, and the fallback peer group for thin categories."""
+    EQUITY = "Equity"
+    DEBT = "Debt"
+    HYBRID = "Hybrid"
+    INDEX = "Index"
+    COMMODITY = "Commodity"
+    INTERNATIONAL = "International"
+    SOLUTION = "Solution"
     OTHER = "Other"
+
+
+class RiskLevel(str, enum.Enum):
+    """SEBI riskometer tiers — the words printed on every Indian factsheet."""
+    LOW = "Low"
+    LOW_TO_MODERATE = "Low to Moderate"
+    MODERATE = "Moderate"
+    MODERATELY_HIGH = "Moderately High"
+    HIGH = "High"
+    VERY_HIGH = "Very High"
+
+
+#: Canonical category vocabulary.  The authoritative source at runtime is
+#: AMFI's own grouping in NAVAll.txt (see backend/analytics/amfi_categories.py);
+#: this list exists so the vocabulary is documented in one place and so
+#: ``CATEGORY_ORDER`` can drive stable display ordering.
+from backend.analytics.taxonomy import CATEGORY_ORDER  # noqa: E402
+
+FUND_CATEGORIES: tuple[str, ...] = tuple(CATEGORY_ORDER)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -125,7 +115,25 @@ class Scheme(Base):
     plan_type: Mapped[str | None] = mapped_column(String(32))   # Direct / Regular
     option_type: Mapped[str | None] = mapped_column(String(32)) # Growth / Dividend
     inception_date: Mapped[date | None] = mapped_column(Date, index=True)
+    asset_class: Mapped[str] = mapped_column(String(32), default="Other", index=True)
+    #: True when category/AMC/plan came from AMFI's own grouped NAV file rather
+    #: than from parsing the scheme name.  Name parsing must never overwrite it.
+    amfi_classified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # -- Denormalised NAV facts ------------------------------------------------
+    # Maintained by the refresh pipeline.  Keeping these on the scheme row turns
+    # the fund-list query from a 3-way join over 3M NAV rows into a single
+    # indexed scan, which is the difference between 4s and 40ms per page.
+    nav_latest: Mapped[float | None] = mapped_column(Float)
+    nav_latest_date: Mapped[date | None] = mapped_column(Date, index=True)
+    nav_first_date: Mapped[date | None] = mapped_column(Date)
+    nav_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    #: True when the scheme is a live, open-ended, Growth-option plan with
+    #: enough history to be scored.  Everything the app shows is drawn from
+    #: this universe; matured FMPs and dormant plans are filtered out here.
+    is_investable: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -238,28 +246,58 @@ class FundFeatures(Base):
     feature_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
     # ── Trailing returns (%) ──────────────────────────────────────────────────
+    # -- Trailing returns (%) --------------------------------------------------
+    # Sub-1-year horizons are absolute; 1y and longer are CAGR.  See
+    # backend/analytics/metrics.py for the convention and why it matters.
     return_1m: Mapped[float | None] = mapped_column(Float)
     return_3m: Mapped[float | None] = mapped_column(Float)
     return_6m: Mapped[float | None] = mapped_column(Float)
+    return_ytd: Mapped[float | None] = mapped_column(Float)
     return_1y: Mapped[float | None] = mapped_column(Float)
+    return_2y: Mapped[float | None] = mapped_column(Float)
     return_3y: Mapped[float | None] = mapped_column(Float)
     return_5y: Mapped[float | None] = mapped_column(Float)
+    return_10y: Mapped[float | None] = mapped_column(Float)
+    return_since_inception: Mapped[float | None] = mapped_column(Float)
 
-    # ── Risk metrics ─────────────────────────────────────────────────────────
+    # -- Risk metrics ----------------------------------------------------------
     volatility_1y: Mapped[float | None] = mapped_column(Float)     # annualised std dev
+    volatility_3y: Mapped[float | None] = mapped_column(Float)
+    downside_deviation_1y: Mapped[float | None] = mapped_column(Float)
     sharpe_1y: Mapped[float | None] = mapped_column(Float)
     sortino_1y: Mapped[float | None] = mapped_column(Float)
+    calmar_1y: Mapped[float | None] = mapped_column(Float)
+    var_95_1y: Mapped[float | None] = mapped_column(Float)
     alpha_1y: Mapped[float | None] = mapped_column(Float)
     beta_1y: Mapped[float | None] = mapped_column(Float)
+    r_squared_1y: Mapped[float | None] = mapped_column(Float)
+    tracking_error_1y: Mapped[float | None] = mapped_column(Float)
+    information_ratio_1y: Mapped[float | None] = mapped_column(Float)
+    up_capture_1y: Mapped[float | None] = mapped_column(Float)
+    down_capture_1y: Mapped[float | None] = mapped_column(Float)
     max_drawdown_1y: Mapped[float | None] = mapped_column(Float)
+    max_drawdown_3y: Mapped[float | None] = mapped_column(Float)
     drawdown_recovery_days: Mapped[float | None] = mapped_column(Float)
 
-    # ── Momentum ─────────────────────────────────────────────────────────────
+    # -- Consistency (rolling 1-year windows on month-end NAV) -----------------
+    rolling_1y_mean: Mapped[float | None] = mapped_column(Float)
+    rolling_1y_std: Mapped[float | None] = mapped_column(Float)
+    rolling_1y_best: Mapped[float | None] = mapped_column(Float)
+    rolling_1y_worst: Mapped[float | None] = mapped_column(Float)
+    rolling_1y_positive_pct: Mapped[float | None] = mapped_column(Float)
+
+    # -- Momentum --------------------------------------------------------------
     momentum_roc_1m: Mapped[float | None] = mapped_column(Float)   # rate of change
     momentum_roc_3m: Mapped[float | None] = mapped_column(Float)
+    momentum_roc_6m: Mapped[float | None] = mapped_column(Float)
     ma_50d: Mapped[float | None] = mapped_column(Float)
     ma_200d: Mapped[float | None] = mapped_column(Float)
     ma_crossover: Mapped[float | None] = mapped_column(Float)      # nav / ma200 ratio
+
+    # -- Data provenance -------------------------------------------------------
+    nav_days: Mapped[float | None] = mapped_column(Float)
+    history_years: Mapped[float | None] = mapped_column(Float)
+    nav_adjustments: Mapped[float | None] = mapped_column(Float)   # corporate actions neutralised
 
     # ── Fundamental / fund-specific ───────────────────────────────────────────
     expense_ratio: Mapped[float | None] = mapped_column(Float)
@@ -300,16 +338,27 @@ class FundScore(Base):
     # Component scores (0–100 each) for explainability breakdown in UI
     score_returns: Mapped[float | None] = mapped_column(Float)
     score_consistency: Mapped[float | None] = mapped_column(Float)
+    score_momentum: Mapped[float | None] = mapped_column(Float)
     score_cost: Mapped[float | None] = mapped_column(Float)
     score_sentiment: Mapped[float | None] = mapped_column(Float)
     score_stability: Mapped[float | None] = mapped_column(Float)
+
+    # -- Provenance ------------------------------------------------------------
+    #: Share of the scoring weight backed by real data, 0-1.  Components with
+    #: no inputs are dropped and the remaining weights renormalised, so this
+    #: reports how much of the model actually ran instead of silently
+    #: discounting the score.
+    data_confidence: Mapped[float | None] = mapped_column(Float)
+    peer_group: Mapped[str | None] = mapped_column(String(64), index=True)
+    peer_count: Mapped[int | None] = mapped_column(Integer)
+    peer_rank: Mapped[int | None] = mapped_column(Integer)
 
     # SHAP / feature importance JSON blob (populated by ML model)
     shap_json: Mapped[str | None] = mapped_column(Text)
 
     # Risk assessment (0-100 score and Low/Medium/High level)
     risk_score: Mapped[float | None] = mapped_column(Float)         # 0-100
-    risk_level: Mapped[str | None] = mapped_column(String(16))      # Low / Medium / High
+    risk_level: Mapped[str | None] = mapped_column(String(32))      # SEBI riskometer tier
     risk_shap_json: Mapped[str | None] = mapped_column(Text)        # Risk SHAP values
 
     scored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

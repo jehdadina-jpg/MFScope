@@ -1,79 +1,43 @@
-import { Shield, AlertTriangle, AlertCircle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { RISK_BG, RISK_COLOR, RISK_ORDER, cn } from "@/lib/utils";
 
-interface RiskBadgeProps {
+interface Props {
   riskLevel: string | null;
   riskScore?: number | null;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md";
   showLabel?: boolean;
   className?: string;
 }
 
-const RISK_CONFIG = {
-  Low: {
-    color: "text-success",
-    bgColor: "bg-success/10",
-    borderColor: "border-success/30",
-    icon: Shield,
-    label: "Low Risk",
-  },
-  Medium: {
-    color: "text-warning",
-    bgColor: "bg-warning/10",
-    borderColor: "border-warning/30",
-    icon: AlertTriangle,
-    label: "Medium Risk",
-  },
-  High: {
-    color: "text-danger",
-    bgColor: "bg-danger/10",
-    borderColor: "border-danger/30",
-    icon: AlertCircle,
-    label: "High Risk",
-  },
+const SIZE = {
+  sm: "text-2xs px-2 py-0.5",
+  md: "text-xs px-2.5 py-1",
 };
 
-export default function RiskBadge({
-  riskLevel,
-  riskScore,
-  size = "md",
-  showLabel = true,
-  className,
-}: RiskBadgeProps) {
-  if (!riskLevel || !(riskLevel in RISK_CONFIG)) {
-    return null;
-  }
-
-  const config = RISK_CONFIG[riskLevel as keyof typeof RISK_CONFIG];
-  const Icon = config.icon;
-
-  const sizeClasses = {
-    sm: "text-2xs px-1.5 py-0.5",
-    md: "text-xs px-2 py-1",
-    lg: "text-sm px-3 py-1.5",
-  };
-
-  const iconSizes = {
-    sm: 10,
-    md: 12,
-    lg: 14,
-  };
+/** SEBI riskometer tier as a compact pill with a 6-step position dial. */
+export default function RiskBadge({ riskLevel, riskScore, size = "sm", showLabel = true, className }: Props) {
+  if (!riskLevel) return null;
+  const idx = RISK_ORDER.indexOf(riskLevel as (typeof RISK_ORDER)[number]);
 
   return (
-    <div
+    <span
+      title={riskScore != null ? `Risk score ${riskScore.toFixed(0)}/100` : undefined}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border font-medium",
-        "transition-all duration-200",
-        config.bgColor,
-        config.borderColor,
-        config.color,
-        sizeClasses[size],
+        "inline-flex items-center gap-1.5 rounded-pill font-medium whitespace-nowrap",
+        RISK_BG[riskLevel],
+        RISK_COLOR[riskLevel],
+        SIZE[size],
         className
       )}
-      title={riskScore != null ? `Risk Score: ${riskScore.toFixed(1)}` : undefined}
     >
-      <Icon size={iconSizes[size]} aria-hidden />
-      {showLabel && <span>{config.label}</span>}
-    </div>
+      <span className="flex items-center gap-[2px]">
+        {RISK_ORDER.map((_, i) => (
+          <span
+            key={i}
+            className={cn("w-[3px] h-2.5 rounded-full", i <= idx ? "bg-current" : "bg-current/20")}
+          />
+        ))}
+      </span>
+      {showLabel && riskLevel}
+    </span>
   );
 }

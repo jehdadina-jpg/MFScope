@@ -1,62 +1,67 @@
-import { ResponsiveContainer, LineChart, Line, Tooltip } from "recharts";
-import type { NAVPoint } from "@/lib/api";
-import { fmtNav } from "@/lib/utils";
+import { useId, useMemo } from "react";
 
-interface SparkLineProps {
-  data: NAVPoint[];
-  /** Width in px; height is always 40px for card use */
+interface Props {
+  values: number[];
   width?: number;
+  height?: number;
   className?: string;
+  strokeWidth?: number;
 }
 
-function trendColor(data: NAVPoint[]): string {
-  if (data.length < 2) return "#6B7280";
-  const first = data[0].nav;
-  const last  = data[data.length - 1].nav;
-  return last >= first ? "#10B981" : "#EF4444";
-}
+/** Minimal inline trend line — no axes, no tooltip, just shape. */
+export default function SparkLine({ values, width = 96, height = 32, className, strokeWidth = 1.6 }: Props) {
+  const gradientId = useId();
 
-export default function SparkLine({ data, width = 96, className }: SparkLineProps) {
-  if (!data || data.length === 0) {
-    return (
-      <div
-        className={`flex items-center justify-center text-text-muted text-2xs ${className ?? ""}`}
-        style={{ width, height: 40 }}
-      >
-        no data
-      </div>
-    );
+  const { path, areaPath, positive } = useMemo(() => {
+    if (!values || values.length < 2) return { path: "", areaPath: "", positive: true };
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const stepX = width / (values.length - 1);
+    const pad = strokeWidth;
+
+    const points = values.map((v, i) => {
+      const x = i * stepX;
+      const y = pad + (1 - (v - min) / range) * (height - pad * 2);
+      return [x, y] as const;
+    });
+
+    const line = points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
+    const area = `${line} L${width},${height} L0,${height} Z`;
+
+    return { path: line, areaPath: area, positive: values[values.length - 1] >= values[0] };
+  }, [values, width, height, strokeWidth]);
+
+  if (!path) {
+    return <div className={className} style={{ width, height }} />;
   }
 
-  const color = trendColor(data);
-
   return (
-    <div style={{ width, height: 40 }} className={className}>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 4, right: 2, bottom: 4, left: 2 }}>
-          <Line
-            type="monotone"
-            dataKey="nav"
-            stroke={color}
-            strokeWidth={1.5}
-            dot={false}
-            isAnimationActive={false}
-          />
-          <Tooltip
-            contentStyle={{
-              background: "#111318",
-              border: "1px solid #1E2028",
-              borderRadius: "6px",
-              padding: "4px 8px",
-              fontSize: "11px",
-              color: "#E8EAF0",
-            }}
-            itemStyle={{ color }}
-            formatter={(v: number) => [fmtNav(v), "NAV"]}
-            labelFormatter={(label: string) => label}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className={className}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={positive ? "#3dd68c" : "#f2637a"} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={positive ? "#3dd68c" : "#f2637a"} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradientId})`} stroke="none" />
+      <path
+        d={path}
+        fill="none"
+        stroke={positive ? "#3dd68c" : "#f2637a"}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
   );
 }

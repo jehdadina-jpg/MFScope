@@ -1,21 +1,33 @@
 """
-APScheduler — Scheduled Data Ingestion Jobs
-=============================================
-Two jobs:
-  1. nav_job   — daily: pull AMFI NAVAll.txt at ~9 PM IST (after AMFI publishes)
-  2. news_job  — hourly: pull all configured RSS feeds
+Scheduled jobs
+==============
+The daily pipeline, and the APScheduler wiring that runs it unattended.
+
+Pipeline order matters
+----------------------
+Each stage depends on the previous one's output::
+
+    NAV pull  →  universe refresh  →  features  →  scores  →  risk
+
+The universe refresh has to run *after* the NAV pull, because investability is
+defined relative to the freshest NAV print in the database.  Risk has to run
+*after* scoring, because it updates the ``fund_score`` rows the scorer writes.
+The previous version ran features and scoring concurrently with the NAV pull
+via two independent ``create_task`` calls, so a refresh scored the previous
+day's data.
 
 Run standalone:
-    python -m backend.ingestion.scheduler
 
-Or import `start_scheduler()` and call it from the FastAPI lifespan handler.
+    python -m backend.ingestion.scheduler          # long-running scheduler
+    python -m backend.ingestion.scheduler --once   # one pipeline pass, then exit
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import signal
-import sys
+from datetime import date
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -24,104 +36,119 @@ from loguru import logger
 
 from backend.config import settings
 
+#: One pipeline at a time.  A manual refresh landing on top of the nightly run
+#: would have both stages writing the same feature rows.
+_PIPELINE_LOCK = asyncio.Lock()
 
-# ── Job functions ─────────────────────────────────────────────────────────────
 
-async def nav_job() -> None:
-    """Pull daily NAV from AMFI and persist to DB."""
+# ── Stages ────────────────────────────────────────────────────────────────────
+
+async def nav_job() -> dict[str, int]:
+    """Pull AMFI's daily NAV file and sync the scheme master."""
     from backend.ingestion.amfi_client import AMFIClient
-    try:
-        client = AMFIClient()
-        count = await client.fetch_latest_nav()
-        logger.info(f"[nav_job] {count} NAV rows upserted.")
-    except Exception as exc:
-        logger.error(f"[nav_job] Failed: {exc}", exc_info=True)
+
+    return await AMFIClient().fetch_latest_nav()
 
 
-async def news_job() -> None:
-    """Pull all RSS feeds and score new articles."""
+async def universe_job() -> dict[str, int]:
+    from backend.ingestion.universe import refresh_universe
+
+    return await refresh_universe()
+
+
+async def feature_job(as_of: date | None = None) -> int:
+    from backend.features.feature_builder import FeatureBuilder
+
+    return await FeatureBuilder().build_all(as_of=as_of)
+
+
+async def score_job(as_of: date | None = None) -> int:
+    """Composite score, then risk — risk updates the rows scoring creates."""
+    from backend.scoring.risk_model import RiskModel
+    from backend.scoring.rule_based import RuleBasedScorer
+
+    written = await RuleBasedScorer().score_all(as_of=as_of)
+    if written:
+        await RiskModel().score_all_risks(as_of=as_of)
+    return written
+
+
+async def news_job() -> int:
+    """Pull RSS feeds and score anything new for sentiment."""
     from backend.ingestion.news_scraper import NewsScraper
     from backend.nlp.sentiment import SentimentPipeline
-    try:
-        scraper = NewsScraper()
-        summary = await scraper.run_all()
-        total_new = sum(summary.values())
-        logger.info(f"[news_job] Articles ingested: {summary}")
 
-        if total_new > 0:
-            # Score newly ingested articles immediately
-            pipeline = SentimentPipeline()
-            scored = await pipeline.score_pending_articles(limit=total_new + 50)
-            logger.info(f"[news_job] {scored} articles scored for sentiment.")
+    try:
+        summary = await NewsScraper().run_all()
     except Exception as exc:
-        logger.error(f"[news_job] Failed: {exc}", exc_info=True)
+        logger.error(f"[news] ingestion failed: {exc}")
+        return 0
 
+    total_new = sum(summary.values())
+    logger.info(f"[news] articles ingested: {summary}")
+    if total_new <= 0:
+        return 0
 
-async def score_job() -> None:
-    """
-    Re-compute features and scores for all active schemes.
-    Runs daily after the NAV job completes.
-    """
-    from backend.features.feature_builder import FeatureBuilder
-    from backend.scoring.rule_based import RuleBasedScorer
-    from backend.scoring.risk_model import RiskModel
     try:
-        builder = FeatureBuilder()
-        await builder.build_all_features()
-        logger.info("[score_job] Features rebuilt.")
+        scored = await SentimentPipeline().score_pending_articles(limit=total_new + 50)
+        logger.info(f"[news] {scored} articles scored.")
+        return scored
+    except Exception as exc:
+        logger.error(f"[news] sentiment scoring failed: {exc}")
+        return 0
 
-        scorer = RuleBasedScorer()
-        await scorer.score_all()
-        logger.info("[score_job] Scores updated.")
-        
-        # Add risk scoring
+
+# ── Full pipeline ─────────────────────────────────────────────────────────────
+
+async def daily_pipeline(as_of: date | None = None, pull_nav: bool = True) -> dict[str, object]:
+    """NAV → universe → features → scores → risk, in order, one at a time."""
+    if _PIPELINE_LOCK.locked():
+        logger.warning("Pipeline already running — skipping this trigger.")
+        return {"status": "skipped"}
+
+    async with _PIPELINE_LOCK:
+        results: dict[str, object] = {"as_of": str(as_of or date.today())}
         try:
-            risk_model = RiskModel()
-            await risk_model.score_all_risks()
-            logger.info("[score_job] Risk scores updated.")
-        except FileNotFoundError:
-            logger.warning("[score_job] Risk model not trained yet, skipping risk scoring.")
+            if pull_nav:
+                results["nav"] = await nav_job()
+            results["universe"] = await universe_job()
+            results["features"] = await feature_job(as_of)
+            results["scores"] = await score_job(as_of)
+            results["status"] = "complete"
+            logger.info(f"Daily pipeline complete: {results}")
         except Exception as exc:
-            logger.error(f"[score_job] Risk scoring failed: {exc}")
-    except Exception as exc:
-        logger.error(f"[score_job] Failed: {exc}", exc_info=True)
+            results["status"] = "failed"
+            results["error"] = str(exc)
+            logger.exception(f"Daily pipeline failed: {exc}")
+        return results
 
 
-# ── Scheduler setup ───────────────────────────────────────────────────────────
+# ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-    # Daily NAV pull at 21:15 IST (AMFI typically publishes by ~9 PM)
+    # AMFI publishes the day's NAV file by ~21:00 IST.
     scheduler.add_job(
-        nav_job,
-        CronTrigger(hour=21, minute=15, timezone="Asia/Kolkata"),
-        id="nav_daily",
-        name="AMFI NAV daily pull",
+        daily_pipeline,
+        CronTrigger(hour=21, minute=30, timezone="Asia/Kolkata"),
+        id="daily_pipeline",
+        name="NAV → universe → features → scores",
         replace_existing=True,
-        misfire_grace_time=3600,
+        misfire_grace_time=7200,
+        max_instances=1,
+        coalesce=True,
     )
-
-    # Daily score refresh at 22:00 IST (after NAV job)
-    scheduler.add_job(
-        score_job,
-        CronTrigger(hour=22, minute=0, timezone="Asia/Kolkata"),
-        id="score_daily",
-        name="Feature + score refresh",
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
-
-    # News pull every hour
     scheduler.add_job(
         news_job,
         IntervalTrigger(seconds=settings.news_pull_interval_seconds),
         id="news_hourly",
         name="RSS news pull",
         replace_existing=True,
-        misfire_grace_time=600,
+        misfire_grace_time=900,
+        max_instances=1,
+        coalesce=True,
     )
-
     return scheduler
 
 
@@ -129,7 +156,6 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 def start_scheduler() -> AsyncIOScheduler:
-    """Start the global scheduler. Safe to call from FastAPI lifespan."""
     global _scheduler
     if _scheduler is not None and _scheduler.running:
         return _scheduler
@@ -146,38 +172,38 @@ def stop_scheduler() -> None:
         logger.info("Scheduler stopped.")
 
 
-# ── Standalone entry point ────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 async def _run_forever() -> None:
     from backend.db.session import init_db
 
-    logger.info("Initialising DB …")
     await init_db()
-
-    scheduler = start_scheduler()
+    start_scheduler()
     logger.info("Scheduler running. Press Ctrl+C to stop.")
 
-    # Kick off an immediate news pull on startup so we have data right away
-    asyncio.create_task(news_job())
-
-    loop = asyncio.get_running_loop()
-
     stop_event = asyncio.Event()
-
-    def _handle_signal():
-        logger.info("Shutdown signal received.")
-        stop_event.set()
-
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, _handle_signal)
+            loop.add_signal_handler(sig, stop_event.set)
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler for all signals
-            pass
+            pass          # Windows does not support all signal handlers
 
-    await stop_event.wait()
-    stop_scheduler()
+    try:
+        await stop_event.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_scheduler()
 
 
 if __name__ == "__main__":
-    asyncio.run(_run_forever())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--once", action="store_true", help="Run one pipeline pass and exit.")
+    parser.add_argument("--no-nav", action="store_true", help="Skip the AMFI download.")
+    args = parser.parse_args()
+
+    if args.once:
+        asyncio.run(daily_pipeline(pull_nav=not args.no_nav))
+    else:
+        asyncio.run(_run_forever())
