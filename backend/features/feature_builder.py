@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, AsyncIterator, Iterable
 
 import numpy as np
@@ -118,6 +118,12 @@ async def load_sentiment_by_scheme(as_of: date) -> dict[int, dict[str, float | N
     from backend.db.models import NewsArticle
 
     since = as_of - timedelta(days=90)
+    # Upper-bounded by `as_of` too: an unbounded upper end means a feature row
+    # built for a past date would see news published after it, which is
+    # harmless for a same-day build (the only case in production today) but
+    # is real look-ahead the moment anyone re-derives features for a
+    # historical date — a backtest or a re-run after a late pipeline.
+    until = datetime.combine(as_of, time.max)
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             select(
@@ -128,6 +134,7 @@ async def load_sentiment_by_scheme(as_of: date) -> dict[int, dict[str, float | N
             )
             .join(NewsArticle, NewsSentiment.article_id == NewsArticle.id)
             .where(NewsArticle.published_at >= since)
+            .where(NewsArticle.published_at <= until)
         )
         records = rows.all()
 
@@ -176,11 +183,21 @@ async def load_sentiment_by_scheme(as_of: date) -> dict[int, dict[str, float | N
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 
-async def load_latest_metadata() -> dict[int, FundMetadata]:
-    """Most recent fundamental snapshot per scheme, in one pass."""
+async def load_latest_metadata(as_of: date) -> dict[int, FundMetadata]:
+    """
+    Most recent fundamental snapshot per scheme as of ``as_of``, in one pass.
+
+    Bounded by ``as_of_date <= as_of``: without that bound, a feature row
+    built for a past date would pick up a fund's *current* expense ratio, AUM
+    and manager tenure — future information feeding the cost and stability
+    score components. Harmless today (features are only ever built for the
+    current date), but real leakage the moment a historical date is rebuilt.
+    """
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
-            select(FundMetadata).order_by(FundMetadata.scheme_id, FundMetadata.as_of_date.desc())
+            select(FundMetadata)
+            .where(FundMetadata.as_of_date <= as_of)
+            .order_by(FundMetadata.scheme_id, FundMetadata.as_of_date.desc())
         )
         latest: dict[int, FundMetadata] = {}
         for meta in rows.scalars().all():
@@ -188,12 +205,13 @@ async def load_latest_metadata() -> dict[int, FundMetadata]:
     return latest
 
 
-async def load_aum_growth() -> dict[int, float]:
-    """Percent change between the two most recent AUM snapshots per scheme."""
+async def load_aum_growth(as_of: date) -> dict[int, float]:
+    """Percent change between the two most recent AUM snapshots as of ``as_of``."""
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             select(FundMetadata.scheme_id, FundMetadata.aum_crore, FundMetadata.as_of_date)
             .where(FundMetadata.aum_crore.is_not(None))
+            .where(FundMetadata.as_of_date <= as_of)
             .order_by(FundMetadata.scheme_id, FundMetadata.as_of_date.desc())
         )
         by_scheme: dict[int, list[float]] = defaultdict(list)
@@ -366,8 +384,8 @@ class FeatureBuilder:
         benchmark_returns = benchmark.pct_change().dropna() if benchmark is not None else None
 
         sentiment = await load_sentiment_by_scheme(as_of)
-        metadata = await load_latest_metadata()
-        aum_growth = await load_aum_growth()
+        metadata = await load_latest_metadata(as_of)
+        aum_growth = await load_aum_growth(as_of)
 
         scheme_ids = set(universe)
         batch: list[dict[str, Any]] = []

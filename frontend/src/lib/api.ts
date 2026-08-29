@@ -89,6 +89,7 @@ export interface ComponentBreakdown {
   weights: Record<string, number>;
   nominal_weights: Record<string, number>;
   missing: string[];
+  blended_score: number | null;
   data_confidence: number | null;
   peer_group: string | null;
   peer_count: number | null;

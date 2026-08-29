@@ -12,8 +12,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-40 border-b border-stroke bg-canvas/85 backdrop-blur-md">
         <div className="mx-auto max-w-[1400px] px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2 shrink-0 group">
-            <span className="grid place-items-center w-7 h-7 rounded-md bg-brand text-white transition-transform duration-150 ease-out group-active:scale-90">
+          <Link to="/" className="flex items-center gap-2 shrink-0 group relative">
+            <span className="absolute -inset-2 rounded-full bg-brand/25 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300" aria-hidden />
+            <span className="relative grid place-items-center w-7 h-7 rounded-md bg-brand text-white transition-transform duration-150 ease-out group-active:scale-90 group-hover:scale-105">
               <LineChart size={15} strokeWidth={2.5} />
             </span>
             <span className="text-[15px] font-semibold tracking-tight">MFScope</span>
@@ -22,6 +23,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="hidden md:flex items-center gap-1 text-2xs text-ink-faint">
             {stats && (
               <>
+                <span className="relative flex h-1.5 w-1.5 mr-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-up opacity-60" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-up" />
+                </span>
                 <span className="num text-ink-dim">{stats.investable_schemes.toLocaleString("en-IN")}</span>
                 <span>funds scored</span>
                 <span className="mx-2 text-stroke-strong">·</span>

@@ -40,6 +40,11 @@ export default function ScoreBreakdown({ breakdown }: { breakdown: ComponentBrea
       <p className="text-2xs text-ink-faint">
         Ranked against {breakdown.peer_count ?? "—"} peers in {breakdown.peer_group ?? "its category"} ·{" "}
         {fmtPctPlain((breakdown.data_confidence ?? 0) * 100)} data confidence
+        {breakdown.blended_score != null && (
+          <>
+            {" "}· blended score {breakdown.blended_score.toFixed(0)} before peer-group scaling
+          </>
+        )}
       </p>
     </div>
   );

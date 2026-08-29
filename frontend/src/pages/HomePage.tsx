@@ -27,10 +27,13 @@ export default function HomePage() {
     () => ({
       category: filters.category || undefined,
       asset_class: filters.assetClass || undefined,
+      amc: filters.amc || undefined,
       conviction: filters.conviction || undefined,
       risk_level: filters.riskLevel || undefined,
       plan_type: filters.planType || undefined,
       search: debouncedSearch || undefined,
+      min_score: filters.minScore > 0 ? filters.minScore : undefined,
+      max_expense_ratio: filters.maxExpenseRatio ?? undefined,
       sort_by: filters.sortBy,
       sort_dir: filters.sortDir,
       page,
@@ -51,7 +54,7 @@ export default function HomePage() {
       <section className="flex flex-col gap-1.5 pt-1">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Indian mutual funds, ranked honestly</h1>
         <p className="text-sm text-ink-dim max-w-2xl">
-          Every score is a percentile against real peers — same category, same plan type — with the exact math shown on
+          Every score is ranked against real peers — same category, same plan type — with the exact math shown on
           each fund's page. No fund is scored on data it doesn't have.
         </p>
       </section>

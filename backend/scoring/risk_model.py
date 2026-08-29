@@ -1,7 +1,22 @@
 """
 Risk model
 ==========
-Assigns every scheme a 0–100 risk score and a SEBI-riskometer tier.
+Assigns every scheme a 0–100 realised-risk score and a six-tier label, using
+the same vocabulary as SEBI's riskometer ("Low" … "Very High").
+
+This is deliberately **not a reproduction of the official SEBI riskometer**.
+SEBI's methodology is structural — it scores a fund from its *holdings*
+(market-cap mix, credit rating, duration, liquidity) per a prescribed formula,
+independent of how the fund actually traded.  This model scores *realised
+behaviour* — the volatility, drawdown and market sensitivity the fund's NAV
+actually exhibited — which is a different, complementary question ("how did
+this fund behave" vs. "what does it hold").  The two will disagree by
+construction: SEBI puts almost every diversified equity fund, including large
+cap, at "Very High" because it holds equity, while a large-cap fund's
+*realised* volatility is genuinely calmer than a small-cap fund's.  Both
+numbers are useful; this module only ever claims to compute the second one.
+Label it "Realised risk" in the UI, not "Riskometer", so the two are never
+mistaken for the same figure.
 
 Why this is not machine learning
 --------------------------------
@@ -80,20 +95,27 @@ RISK_FEATURES: tuple[str, ...] = (
 # Indian fund category, which is what makes the output map onto the tiers the
 # way a factsheet does.
 
+#: A verified pass with real category-average volatility showed large- and
+#: mid-cap funds landing within a fraction of a point of the "High"/"Very
+#: High" cutoffs — meaning next quarter's ordinary volatility wobble could
+#: flip a whole category's label between refreshes. The knots through the
+#: 11–24% range carry more headroom below their nearest cutoff than the
+#: version this replaced, without changing where the calm (debt) and extreme
+#: (thematic) ends of the table sit.
 _VOLATILITY_ANCHORS = np.array(
     [
         [0.0, 0.0],
         [0.35, 8.0],     # overnight
         [1.0, 16.0],     # liquid / ultra short
         [2.5, 26.0],     # low duration, arbitrage
-        [5.0, 36.0],     # corporate bond, dynamic bond
-        [8.0, 45.0],     # gilt, conservative hybrid
-        [11.0, 55.0],    # balanced advantage, multi-asset
-        [14.0, 65.0],    # large cap, index
-        [17.0, 74.0],    # flexi / multi cap
-        [20.0, 82.0],    # mid cap
-        [24.0, 90.0],    # small cap
-        [32.0, 97.0],    # single-sector, thematic
+        [5.0, 34.0],     # corporate bond, dynamic bond
+        [8.0, 42.0],     # gilt, conservative hybrid
+        [11.0, 50.0],    # balanced advantage, multi-asset
+        [14.0, 58.0],    # large cap, index
+        [17.0, 68.0],    # flexi / multi cap
+        [20.0, 78.0],    # mid cap
+        [24.0, 88.0],    # small cap
+        [32.0, 96.0],    # single-sector, thematic
         [50.0, 100.0],
     ]
 )
@@ -162,7 +184,18 @@ def compute_risk(frame: pd.DataFrame) -> pd.DataFrame:
     drawdown = pd.to_numeric(frame.get("max_drawdown_3y"), errors="coerce").fillna(
         pd.to_numeric(frame.get("max_drawdown_1y"), errors="coerce")
     ).abs()
-    beta = pd.to_numeric(frame.get("beta_1y"), errors="coerce").abs()
+
+    # Beta is missing precisely for the funds whose beta is near zero — debt,
+    # liquid and gold funds have no meaningful equity-benchmark relationship,
+    # so alpha/beta regression is never attempted for them (see
+    # metrics.compute_all). That absence is informative, unlike a genuinely
+    # unknown input: dropping the beta component for these funds (the
+    # previous behaviour) under-weights the two components that *are*
+    # available and biases exactly the safest funds toward a higher score.
+    # Impute beta ≈ 0 whenever the fund has real risk history to score at all.
+    has_risk_history = volatility.notna() | drawdown.notna()
+    beta_raw = pd.to_numeric(frame.get("beta_1y"), errors="coerce")
+    beta = beta_raw.where(beta_raw.notna(), 0.0).where(has_risk_history).abs()
 
     parts = pd.DataFrame(index=frame.index)
     parts["risk_volatility"] = _interpolate(volatility, _VOLATILITY_ANCHORS)
@@ -183,6 +216,21 @@ def compute_risk(frame: pd.DataFrame) -> pd.DataFrame:
     return parts
 
 
+def _first_valid(*values):
+    """
+    NaN-safe coalesce.
+
+    Plain ``a or b`` is wrong here: a pandas/numpy NaN is truthy in Python, so
+    ``nan or b`` evaluates to ``nan`` and never falls through to ``b`` — the
+    3-year figure silently "won" over a perfectly good 1-year fallback and the
+    audit trail rendered blank for exactly the funds using that fallback.
+    """
+    for value in values:
+        if value is not None and pd.notna(value):
+            return value
+    return None
+
+
 def explain(row: pd.Series) -> str:
     """Per-component contribution, in the units a person can check."""
     return json.dumps(
@@ -195,8 +243,10 @@ def explain(row: pd.Series) -> str:
             },
             "weights": _WEIGHTS,
             "inputs": {
-                "volatility_pct": _round(row.get("volatility_3y") or row.get("volatility_1y")),
-                "max_drawdown_pct": _round(row.get("max_drawdown_3y") or row.get("max_drawdown_1y")),
+                "volatility_pct": _round(_first_valid(row.get("volatility_3y"), row.get("volatility_1y"))),
+                "max_drawdown_pct": _round(
+                    _first_valid(row.get("max_drawdown_3y"), row.get("max_drawdown_1y"))
+                ),
                 "beta": _round(row.get("beta_1y")),
             },
             "confidence": _round(row.get("risk_confidence"), 3),

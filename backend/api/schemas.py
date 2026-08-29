@@ -79,6 +79,11 @@ class ComponentBreakdown(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)
     nominal_weights: dict[str, float] = Field(default_factory=dict)
     missing: list[str] = Field(default_factory=list)
+    #: The un-spread blend before the peer-group normal-scores transform —
+    #: see backend/scoring/rule_based.py's module docstring. composite_score
+    #: is what's shown everywhere; this is here for anyone who wants the raw
+    #: number the spread was computed from.
+    blended_score: float | None = None
     data_confidence: float | None = None
     peer_group: str | None = None
     peer_count: int | None = None

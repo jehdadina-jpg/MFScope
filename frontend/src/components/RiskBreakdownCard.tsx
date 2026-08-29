@@ -13,12 +13,16 @@ const INPUT_LABELS: Record<string, { label: string; format: (v: number) => strin
   beta: { label: "Beta vs. market", format: (v) => v.toFixed(2) },
 };
 
-/** Shows exactly how the riskometer score was assembled — no black box. */
+/** Shows exactly how the realised-risk score was assembled — no black box. */
 export default function RiskBreakdownCard({ breakdown }: { breakdown: RiskBreakdown }) {
   const entries = Object.entries(breakdown.components).filter(([, v]) => v != null) as [string, number][];
 
   return (
     <div className="flex flex-col gap-3">
+      <p className="text-2xs text-ink-faint -mt-1">
+        Computed from this fund's own trailing volatility, drawdown and beta — not the fund's
+        official SEBI riskometer, which is based on portfolio holdings.
+      </p>
       {entries.map(([key, value]) => (
         <div key={key} className="flex items-center gap-3">
           <span className="text-xs text-ink-dim w-40 shrink-0">{LABELS[key] ?? key}</span>

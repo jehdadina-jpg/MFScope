@@ -160,16 +160,38 @@ def build_series(dates, values) -> pd.Series:
 
 def _trailing_sigma(returns: np.ndarray) -> np.ndarray:
     """
-    Backward-looking daily standard deviation at every point.
+    Backward-looking, outlier-robust dispersion estimate at every point.
 
-    Uses an expanding window until ``SIGMA_WINDOW`` observations are available,
-    then a rolling one.  Points with too little history fall back to the
-    series-wide sigma so early prints are not judged against noise.
+    This has to be a **robust** statistic, not a plain rolling standard
+    deviation. A plain std is what let an earlier version of this detector
+    blind itself: one real corporate-action gap inflates that window's std by
+    an order of magnitude, which silences the sigma-relative test for every
+    other observation in the window — so a fund with monthly IDCW payouts had
+    its first payout detected and every subsequent one missed, because each
+    miss re-contaminated the estimate for the next. The median and the median
+    absolute deviation (MAD) barely move when a handful of the observations in
+    a window are themselves the events being searched for — a robust
+    statistic tolerates close to 50% contamination before it reacts, where a
+    mean-based one reacts to the very first outlier.
+
+    ``1.4826 × MAD`` is the standard scale factor that makes MAD estimate the
+    same quantity as ``σ`` under a normal distribution, so it drops into the
+    sigma-multiple thresholds unchanged.
     """
-    frame = pd.Series(returns, dtype="float64")
-    rolling = frame.shift(1).rolling(SIGMA_WINDOW, min_periods=SIGMA_MIN_OBS).std(ddof=1)
-    overall = float(np.std(returns, ddof=1)) if returns.size > 2 else np.nan
-    sigma = rolling.fillna(overall).to_numpy(dtype="float64")
+    shifted = pd.Series(returns, dtype="float64").shift(1)
+
+    rolling_median = shifted.rolling(SIGMA_WINDOW, min_periods=SIGMA_MIN_OBS).median()
+    rolling_mad = (shifted - rolling_median).abs().rolling(
+        SIGMA_WINDOW, min_periods=SIGMA_MIN_OBS
+    ).median()
+
+    # Backward-only expanding fallback for the head of the series, so the
+    # first ~SIGMA_MIN_OBS points are never judged against future returns.
+    expanding_median = shifted.expanding(min_periods=5).median()
+    expanding_mad = (shifted - expanding_median).abs().expanding(min_periods=5).median()
+
+    mad = rolling_mad.fillna(expanding_mad)
+    sigma = (mad * 1.4826).to_numpy(dtype="float64")
     # A zero sigma (a fund that has literally not moved) would make every
     # subsequent move infinitely significant.
     return np.where(np.isfinite(sigma) & (sigma > 1e-9), sigma, np.inf)
@@ -221,10 +243,24 @@ def adjust_for_corporate_actions(series: pd.Series) -> tuple[pd.Series, int]:
 
 
 def resample_month_ends(series: pd.Series) -> pd.Series:
-    """Month-end NAV, used for rolling-window consistency measures."""
+    """
+    Month-end NAV on a *complete* calendar grid, used for rolling-window
+    consistency measures.
+
+    ``resample("ME").last()`` alone lands on month-end dates, but a stretch
+    with no NAV print simply produces no row for that month — which silently
+    compacts the calendar, so a positional lag of N rows on the compacted
+    series no longer means N months.  Reindexing onto the full month-end range
+    between the first and last observation restores a fixed grid: a missing
+    month becomes an explicit NaN instead of a gap, a positional shift is a
+    calendar shift again, and any rolling window that touches the NaN is
+    dropped by the caller rather than silently stretched.
+    """
     if series.empty:
         return series
-    return series.resample("ME").last().dropna()
+    monthly = series.resample("ME").last()
+    full_index = pd.date_range(monthly.index.min(), monthly.index.max(), freq="ME")
+    return monthly.reindex(full_index)
 
 
 # ── Benchmark construction ────────────────────────────────────────────────────
@@ -241,8 +277,14 @@ def blend_benchmark(series_list: list[pd.Series], min_members: int = 3) -> pd.Se
     if len(series_list) < min_members:
         return None
 
-    frame = pd.DataFrame({i: s for i, s in enumerate(series_list)})
-    returns = frame.pct_change()
+    # Compute each fund's own daily return *before* aligning them into one
+    # frame. Building the frame first and calling pct_change() on the union
+    # index means a single off-calendar print (a fund pricing a day early, a
+    # holiday-calendar mismatch) leaves every other column NaN on that date —
+    # and on the day after, since pct_change() needs the prior row too — which
+    # drops that trading day from the benchmark and from every alpha/beta
+    # regression, rather than just from the one fund that had the stray print.
+    returns = pd.DataFrame({i: s.pct_change().dropna() for i, s in enumerate(series_list)})
     # Require a quorum each day so a lone straggler cannot define the market.
     quorum = returns.notna().sum(axis=1) >= min_members
     median = returns[quorum].median(axis=1).dropna()

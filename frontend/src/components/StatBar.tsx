@@ -1,4 +1,5 @@
 import type { UniverseStats } from "@/lib/api";
+import { useCountUp } from "@/hooks/useCountUp";
 import { fmtCompact, fmtDateShort, fmtPct, returnColor } from "@/lib/utils";
 
 export default function StatBar({ stats }: { stats: UniverseStats | null }) {
@@ -15,27 +16,42 @@ export default function StatBar({ stats }: { stats: UniverseStats | null }) {
     );
   }
 
-  const items = [
-    { label: "Funds scored", value: stats.investable_schemes.toLocaleString("en-IN") },
-    { label: "Fund houses", value: String(stats.amc_count) },
-    {
-      label: "Median 1Y return",
-      value: fmtPct(stats.median_return_1y),
-      valueClass: returnColor(stats.median_return_1y),
-    },
-    { label: "NAV records", value: fmtCompact(stats.nav_records) },
-  ];
-
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {items.map((item) => (
-        <div key={item.label} className="surface-card p-4">
-          <div className="text-2xs text-ink-faint mb-1">{item.label}</div>
-          <div className={`num text-xl font-semibold ${item.valueClass ?? "text-ink"}`}>{item.value}</div>
-        </div>
-      ))}
+      <StatCard label="Funds scored" raw={stats.investable_schemes} format={(v) => Math.round(v).toLocaleString("en-IN")} />
+      <StatCard label="Fund houses" raw={stats.amc_count} format={(v) => String(Math.round(v))} />
+      <StatCard
+        label="Median 1Y return"
+        raw={stats.median_return_1y}
+        format={(v) => fmtPct(v)}
+        valueClass={returnColor(stats.median_return_1y)}
+      />
+      <StatCard label="NAV records" raw={stats.nav_records} format={(v) => fmtCompact(Math.round(v))} />
+
       <div className="col-span-2 sm:col-span-4 text-2xs text-ink-faint -mt-1">
         NAV as of {fmtDateShort(stats.latest_nav_date)} · scores as of {fmtDateShort(stats.latest_score_date)}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  raw,
+  format,
+  valueClass,
+}: {
+  label: string;
+  raw: number | null;
+  format: (v: number) => string;
+  valueClass?: string;
+}) {
+  const animated = useCountUp(raw ?? undefined);
+  return (
+    <div className="surface-card p-4 group">
+      <div className="text-2xs text-ink-faint mb-1">{label}</div>
+      <div className={`num text-xl font-semibold tabular-nums ${valueClass ?? "text-ink"}`}>
+        {animated != null ? format(animated) : "—"}
       </div>
     </div>
   );

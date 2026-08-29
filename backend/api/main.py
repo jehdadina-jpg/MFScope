@@ -651,10 +651,11 @@ async def list_funds(
     column = _SORTABLE.get(sort_by, _SORTABLE["composite_score"])
     direction = "DESC" if sort_dir == "desc" else "ASC"
     # NULLs last in both directions: an unscored fund is not the best fund.
-    # composite_score is a peer percentile, so many funds legitimately tie at
-    # 100 (the leader of every peer group). Break ties by how large that peer
-    # group was, then by risk-adjusted return, so the page orders leaders of
-    # big, meaningful groups first instead of alphabetically-adjacent ties.
+    # composite_score is peer-relative (see rule_based.py), so exact ties still
+    # happen — most often among funds in the same small peer group with
+    # identical inputs. Break ties by how large that peer group was, then by
+    # risk-adjusted return, so the page orders leaders of big, meaningful
+    # groups first instead of alphabetically-adjacent ties.
     tiebreak = ", sc.peer_count DESC, f.sharpe_1y DESC" if sort_by == "composite_score" else ""
     order = f"ORDER BY ({column} IS NULL), {column} {direction}{tiebreak}, s.scheme_name ASC"
 
@@ -708,10 +709,11 @@ async def top_funds(
     """
     Highest-scoring funds.
 
-    ``composite_score`` is a *peer* percentile, so the leader of every peer
-    group scores 100 — including a bucket of four oddities.  Requiring a
-    minimum peer count, and breaking ties by how large the group was, keeps
-    this list to funds that beat a field worth beating.
+    ``composite_score`` is peer-relative and scales with how large the peer
+    group was (see ``rule_based._spread_score``), so the leader of a 4-fund
+    bucket already scores lower than the leader of a 300-fund one — but
+    requiring a minimum peer count here still keeps this list to funds that
+    beat a field worth beating, rather than the best of a handful of oddities.
     """
     score_date, feature_date = await _latest_dates()
     if not score_date:

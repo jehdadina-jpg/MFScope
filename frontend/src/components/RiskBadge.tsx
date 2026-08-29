@@ -13,14 +13,25 @@ const SIZE = {
   md: "text-xs px-2.5 py-1",
 };
 
-/** SEBI riskometer tier as a compact pill with a 6-step position dial. */
+/**
+ * Realised-risk tier as a compact pill with a 6-step position dial.
+ *
+ * Uses SEBI riskometer vocabulary (Low … Very High) but is computed from
+ * trailing volatility, drawdown and beta — not SEBI's holdings-based
+ * methodology — so it can legitimately disagree with a fund's official
+ * riskometer reading. See the title tooltip and RiskBreakdownCard.
+ */
 export default function RiskBadge({ riskLevel, riskScore, size = "sm", showLabel = true, className }: Props) {
   if (!riskLevel) return null;
   const idx = RISK_ORDER.indexOf(riskLevel as (typeof RISK_ORDER)[number]);
 
   return (
     <span
-      title={riskScore != null ? `Risk score ${riskScore.toFixed(0)}/100` : undefined}
+      title={
+        riskScore != null
+          ? `Realised risk score ${riskScore.toFixed(0)}/100 — from trailing volatility, drawdown and beta, not the fund's official SEBI riskometer`
+          : undefined
+      }
       className={cn(
         "inline-flex items-center gap-1.5 rounded-pill font-medium whitespace-nowrap",
         RISK_BG[riskLevel],

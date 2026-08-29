@@ -100,6 +100,26 @@
            focus-visible:border-brand/50 transition-colors duration-150;
   }
 
+  /* Minimal native range slider — one accent thumb, no browser chrome. */
+  .slider {
+    @apply appearance-none h-1 rounded-pill bg-surface-raised cursor-pointer;
+  }
+  .slider::-webkit-slider-thumb {
+    @apply appearance-none w-3.5 h-3.5 rounded-full bg-brand-bright;
+    transition: transform 150ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 150ms ease-out;
+    box-shadow: 0 0 0 3px rgba(10, 11, 13, 1), 0 0 0 4px rgba(109, 123, 255, 0.35);
+  }
+  .slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+  }
+  .slider::-webkit-slider-thumb:active {
+    transform: scale(1.05);
+  }
+  .slider::-moz-range-thumb {
+    @apply w-3.5 h-3.5 rounded-full bg-brand-bright border-0;
+    box-shadow: 0 0 0 3px rgba(10, 11, 13, 1), 0 0 0 4px rgba(109, 123, 255, 0.35);
+  }
+
   .skeleton {
     @apply relative overflow-hidden bg-surface-raised rounded-md;
   }
@@ -116,6 +136,39 @@
     background-size: 300% 100%;
     animation: shimmer 1.8s linear infinite;
   }
+}
+
+/* Sparkline draw-in — pathLength is normalised to 1 by the SVG attribute, so
+   this one keyframe works for every sparkline regardless of its real length. */
+@keyframes spark-draw {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+}
+.spark-draw {
+  animation: spark-draw 900ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes spark-dot-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.spark-dot {
+  transform-origin: center;
+  transform-box: fill-box;
+  opacity: 0;
+  animation: spark-dot-in 240ms cubic-bezier(0.23, 1, 0.32, 1) 760ms both;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -105,12 +105,17 @@ const config: Config = {
           from: { opacity: "0", transform: "scale(0.96)" },
           to: { opacity: "1", transform: "scale(1)" },
         },
+        "pulse-glow": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.45" },
+        },
       },
       animation: {
         "fade-up": "fade-up 320ms cubic-bezier(0.23,1,0.32,1) both",
         "fade-in": "fade-in 200ms ease-out both",
         "scale-in": "scale-in 160ms cubic-bezier(0.23,1,0.32,1) both",
         shimmer: "shimmer 1.8s linear infinite",
+        "pulse-glow": "pulse-glow 2.2s cubic-bezier(0.4,0,0.6,1) infinite",
       },
     },
   },

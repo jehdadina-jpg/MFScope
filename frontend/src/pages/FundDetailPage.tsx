@@ -44,7 +44,7 @@ export default function FundDetailPage() {
 
         {latest_score && (
           <div className="flex flex-col gap-2 items-start sm:items-end shrink-0">
-            <ConvictionPill conviction={latest_score.conviction} score={latest_score.composite_score} size="lg" />
+            <ConvictionPill conviction={latest_score.conviction} score={latest_score.composite_score} size="lg" emphasize />
             {latest_score.risk_level && (
               <RiskBadge riskLevel={latest_score.risk_level} riskScore={latest_score.risk_score} size="md" />
             )}
@@ -78,7 +78,7 @@ export default function FundDetailPage() {
         )}
         {latest_score?.risk_breakdown && (
           <section className="surface-card p-5">
-            <h2 className="text-sm font-semibold text-ink mb-4">Riskometer breakdown</h2>
+            <h2 className="text-sm font-semibold text-ink mb-4">Realised risk breakdown</h2>
             <RiskBreakdownCard breakdown={latest_score.risk_breakdown} />
           </section>
         )}

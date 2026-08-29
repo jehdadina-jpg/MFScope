@@ -43,6 +43,10 @@ RISK_FREE_DAILY = (1.0 + RISK_FREE_ANNUAL) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.
 MIN_OBS_RISK = 120           # ~6 trading months
 MIN_OBS_BETA = 120
 
+#: A "3-year" metric must actually cover close to 3 years of history, not just
+#: clear the same observation-count floor as the 1-year version.
+MIN_YEARS_FOR_3Y = 2.75
+
 #: A fund whose annualised volatility is below this is effectively a cash
 #: account; ratios that divide by σ explode and carry no information.
 MIN_VOL_FOR_RATIO_PCT = 0.15
@@ -186,11 +190,21 @@ def drawdown_recovery_days(series: pd.Series, threshold: float = 0.05) -> float 
     Longest stretch, in calendar days, spent more than ``threshold`` below the
     running peak.  Answers "how long was I underwater?", which is what an
     investor actually feels.
+
+    Measured from the date the peak was actually set to the last day still
+    underwater. An earlier version measured from the first *underwater* day
+    (excluding the run-up from the peak, which understates the stretch) to the
+    first *recovered* day (including a day that was, by definition, no longer
+    underwater, which overstates it by one observation).
     """
     if len(series) < 30:
         return None
     values = series.to_numpy(dtype="float64")
     peak = np.maximum.accumulate(values)
+    positions = np.arange(len(values))
+    # Index of the most recent peak-setting observation at each point.
+    peak_idx = np.maximum.accumulate(np.where(values >= peak, positions, -1))
+
     underwater = values < peak * (1.0 - threshold)
     if not underwater.any():
         return 0.0
@@ -202,10 +216,12 @@ def drawdown_recovery_days(series: pd.Series, threshold: float = 0.05) -> float 
         if flag and start is None:
             start = i
         elif not flag and start is not None:
-            longest = max(longest, (index[i] - index[start]).days)
+            span = (index[i - 1] - index[peak_idx[start]]).days
+            longest = max(longest, span)
             start = None
     if start is not None:
-        longest = max(longest, (index[-1] - index[start]).days)
+        span = (index[-1] - index[peak_idx[start]]).days
+        longest = max(longest, span)
     return float(longest)
 
 
@@ -306,8 +322,12 @@ def rolling_return_stats(nav: NavSeries, window_days: int = 365) -> dict[str, fl
     if len(monthly) < months + 6:
         return empty
 
-    values = monthly.to_numpy(dtype="float64")
-    rolled = values[months:] / values[:-months] - 1.0
+    # ``monthly`` is on a complete calendar grid (see resample_month_ends), so
+    # a positional shift of `months` is guaranteed to span `months` calendar
+    # months even when some of them have no NAV print — those show up as NaN
+    # and the window is dropped by the isfinite filter below, rather than
+    # silently pulling in a window that actually spans 15 months of history.
+    rolled = (monthly / monthly.shift(months) - 1.0).to_numpy(dtype="float64")
     rolled = rolled[np.isfinite(rolled)]
     if rolled.size < 6:
         return empty
@@ -386,10 +406,22 @@ def compute_all(
     out["var_95_1y"] = value_at_risk(returns_1y)
     out["calmar_1y"] = calmar(out["return_1y"], mdd)
 
+    # ``nav.window(1095)`` returns whatever exists up to 1095 days back — for a
+    # fund that IPO'd eight months ago that is simply its entire history, not
+    # a 3-year window. Both metric functions only require MIN_OBS_RISK (~120)
+    # observations, so a young fund's calm first year was silently being
+    # published as its "3-year" volatility and drawdown, which then fed the
+    # risk model as if it were the long-run figure — the opposite of what a
+    # 3-year lookback is for. Require the history to actually be close to 3
+    # years before reporting either field; otherwise leave both None so the
+    # risk model's documented 1y fallback actually runs.
     window_3y = nav.window(1095)
-    out["max_drawdown_3y"] = max_drawdown(window_3y)
-    vol_3y = volatility(window_3y.pct_change().dropna().to_numpy(dtype="float64"))
-    out["volatility_3y"] = vol_3y
+    if nav.history_years >= MIN_YEARS_FOR_3Y:
+        out["max_drawdown_3y"] = max_drawdown(window_3y)
+        out["volatility_3y"] = volatility(window_3y.pct_change().dropna().to_numpy(dtype="float64"))
+    else:
+        out["max_drawdown_3y"] = None
+        out["volatility_3y"] = None
 
     stats = BenchmarkStats()
     if benchmark_returns is not None and len(benchmark_returns) > MIN_OBS_BETA:

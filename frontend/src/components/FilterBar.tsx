@@ -6,10 +6,13 @@ import { cn, CONVICTION_ORDER, RISK_ORDER } from "@/lib/utils";
 export interface Filters {
   category: string;
   assetClass: string;
+  amc: string;
   conviction: string;
   riskLevel: string;
   planType: string;
   search: string;
+  minScore: number;
+  maxExpenseRatio: number | null;
   sortBy: string;
   sortDir: "asc" | "desc";
 }
@@ -17,10 +20,13 @@ export interface Filters {
 export const DEFAULT_FILTERS: Filters = {
   category: "",
   assetClass: "",
+  amc: "",
   conviction: "",
   riskLevel: "",
   planType: "Direct",
   search: "",
+  minScore: 0,
+  maxExpenseRatio: null,
   sortBy: "composite_score",
   sortDir: "desc",
 };
@@ -48,8 +54,16 @@ export default function FilterBar({ options, value, onChange, view, onViewChange
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof Filters>(key: K, v: Filters[K]) => onChange({ ...value, [key]: v });
 
-  const activeCount = [value.assetClass, value.conviction, value.riskLevel].filter(Boolean).length;
+  const activeCount = [
+    value.assetClass,
+    value.amc,
+    value.conviction,
+    value.riskLevel,
+    value.minScore > 0 ? "score" : "",
+    value.maxExpenseRatio != null ? "expense" : "",
+  ].filter(Boolean).length;
   const topCategories = (options?.categories ?? []).slice(0, 9);
+  const sortedAmcs = [...(options?.amcs ?? [])].sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="flex flex-col gap-3">
@@ -145,39 +159,101 @@ export default function FilterBar({ options, value, onChange, view, onViewChange
 
       {/* Advanced filters */}
       {showAdvanced && (
-        <div className="surface-card p-3 flex flex-wrap items-center gap-2 animate-fade-up">
-          <FilterSelect
-            label="Asset class"
-            value={value.assetClass}
-            onChange={(v) => set("assetClass", v)}
-            options={options?.asset_classes ?? []}
-          />
-          <FilterSelect
-            label="Conviction"
-            value={value.conviction}
-            onChange={(v) => set("conviction", v)}
-            options={[...CONVICTION_ORDER]}
-          />
-          <FilterSelect
-            label="Risk"
-            value={value.riskLevel}
-            onChange={(v) => set("riskLevel", v)}
-            options={[...RISK_ORDER]}
-          />
-          <FilterSelect
-            label="Plan"
-            value={value.planType}
-            onChange={(v) => set("planType", v)}
-            options={options?.plan_types ?? ["Direct", "Regular"]}
-          />
-          {activeCount > 0 && (
-            <button
-              onClick={() => onChange({ ...value, assetClass: "", conviction: "", riskLevel: "" })}
-              className="text-2xs text-ink-faint hover:text-ink transition-colors ml-auto"
-            >
-              Clear filters
-            </button>
-          )}
+        <div className="surface-card p-3 flex flex-col gap-3 animate-fade-up">
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterSelect
+              label="Asset class"
+              value={value.assetClass}
+              onChange={(v) => set("assetClass", v)}
+              options={options?.asset_classes ?? []}
+            />
+            <FilterSelect
+              label="AMC"
+              value={value.amc}
+              onChange={(v) => set("amc", v)}
+              options={sortedAmcs}
+            />
+            <FilterSelect
+              label="Conviction"
+              value={value.conviction}
+              onChange={(v) => set("conviction", v)}
+              options={[...CONVICTION_ORDER]}
+            />
+            <FilterSelect
+              label="Risk"
+              value={value.riskLevel}
+              onChange={(v) => set("riskLevel", v)}
+              options={[...RISK_ORDER]}
+            />
+            <FilterSelect
+              label="Plan"
+              value={value.planType}
+              onChange={(v) => set("planType", v)}
+              options={options?.plan_types ?? ["Direct", "Regular"]}
+            />
+            {activeCount > 0 && (
+              <button
+                onClick={() =>
+                  onChange({
+                    ...value,
+                    assetClass: "",
+                    amc: "",
+                    conviction: "",
+                    riskLevel: "",
+                    minScore: 0,
+                    maxExpenseRatio: null,
+                  })
+                }
+                className="text-2xs text-ink-faint hover:text-ink transition-colors ml-auto"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-5 pt-2.5 border-t border-stroke">
+            <label className="flex items-center gap-2.5 text-xs text-ink-dim">
+              <span className="shrink-0">
+                Min score <span className="num text-ink">{value.minScore}</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={90}
+                step={5}
+                value={value.minScore}
+                onChange={(e) => set("minScore", Number(e.target.value))}
+                className="slider w-32"
+              />
+            </label>
+
+            <label className="flex items-center gap-2.5 text-xs text-ink-dim">
+              <span className="shrink-0">
+                Max expense{" "}
+                <span className="num text-ink">
+                  {value.maxExpenseRatio != null ? `${value.maxExpenseRatio.toFixed(1)}%` : "any"}
+                </span>
+              </span>
+              <input
+                type="range"
+                min={0.1}
+                max={3}
+                step={0.1}
+                value={value.maxExpenseRatio ?? 3}
+                onChange={(e) => set("maxExpenseRatio", Number(e.target.value))}
+                className="slider w-32"
+              />
+              {value.maxExpenseRatio != null && (
+                <button
+                  onClick={() => set("maxExpenseRatio", null)}
+                  className="text-ink-faint hover:text-ink transition-colors"
+                  aria-label="Clear expense ratio cap"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </label>
+          </div>
         </div>
       )}
 
